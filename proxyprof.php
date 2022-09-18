@@ -542,8 +542,7 @@
 		$headers = Array();
 		foreach($header_lines as $num => $line) {
 			$line_arr = explode('=', $line);
-			$headers[strtolower(trim($line_arr[0]))] = trim($line_arr[1]);
-			$headers = array_merge($headers, );
+			$headers[strtolower(trim($line_arr[0]))] = trim($line_arr[1]);			
 		}
 		return $headers;
 	}
