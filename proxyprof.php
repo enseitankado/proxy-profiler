@@ -17,6 +17,9 @@
 	use Curl\Curl;
 	use Curl\MultiCurl;	
 	$start = microtime(true);
+	
+	# Check prequistics
+	check_prequistics();
 
 	# Command line options
 	$opts['h'] = array("-h", 				"\t\t\tShow this help.");
@@ -39,11 +42,11 @@
 	if (isset($cmd['h']) or !count($cmd)) {
 		echo "\n Author ozgurkoca: github.com/enseitankado/\n\n";
 		foreach($opts as $opt => $opt_arr)
-			echo ' '.$opt_arr[0].$opt_arr[1]."\n";
+			echo ' '.$opt_arr[0].$opt_arr[1]."\n";			
 			echo "\n Current Installation:\n\n";
-			echo "   PHP ".phpversion()."\n";			
+			echo "   PHP ".phpversion()."\n";
 			echo "   CURL ".curl_version()["version"]."\n";
-			echo "   ".OPENSSL_VERSION_TEXT."\n";	
+			echo "   ".OPENSSL_VERSION_TEXT."\n";			
 			echo "\n About proxy levels:\n\n";
 			echo "   1: Elite proxy servers hide both your IP address and the fact that you are using a proxy server at all.\n";			
 			echo "   2: An anonymous proxy does not reveal your IP address but does reveal that you are using a proxy server.\n";
@@ -60,6 +63,34 @@
 	}
 	
 	//****************************************************************
+	
+	function check_prequistics() {
+		
+		$d = false;
+		$v = phpversion();
+		$v = substr($v, 0, strlen($v) - strpos(strrev($v), '.') - 1);
+		
+		# Check PHP multibyte support
+		if (! function_exists('mb_check_encoding') ) {
+			echo " Multibyte string (mb_) library not installed !\n";
+			echo " To install and enable the library run commands below:\n\n";
+			echo "   sudo apt install php$v-mbstring";
+			echo "   phpenmod -v $v mbstring";
+			$d = true;
+		}
+		
+		# Check php curl library 
+		if (!function_exists('curl_version') ) {
+			echo " PHP curl library not installed !\n";
+			echo " To install and enable the library run commands below:\n\n";
+			echo "   sudo apt install php$v-curl";
+			echo "   phpenmod -v $v curl";
+			$d = true;
+		}
+		
+		if ($d) die();
+	}
+	
 	
 	/**
 	 * The main function to checks and profiles proxy(ies)

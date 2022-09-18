@@ -46,7 +46,7 @@ A SOCKs5 proxy is more secure because it establishes a full TCP connection with 
 
 
 printf "31.44.82.182:5678\n185.139.56.133:4145" | php proxycheck.php -t socks4 -n 1000
-
+cat socks4.lst | php proxycheck.php -t socks4 -n 1000 -g
 
 
 
