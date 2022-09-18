@@ -67,24 +67,25 @@
 	function check_prequistics() {
 		
 		$d = false;
-		$v = phpversion();
-		$v = substr($v, 0, strlen($v) - strpos(strrev($v), '.') - 1);
+		$v = phpversion();		
+		$pos1 = strpos($v, '.');
+		$v = substr($v, 0, strpos($v, '.', $pos1 + 1));
 		
 		# Check PHP multibyte support
 		if (! function_exists('mb_check_encoding') ) {
-			echo " Multibyte string (mb_) library not installed !\n";
+			echo " \nMultibyte string (mb_) library not installed !\n";
 			echo " To install and enable the library run commands below:\n\n";
-			echo "   sudo apt install php$v-mbstring";
-			echo "   phpenmod -v $v mbstring";
+			echo "   sudo apt install php$v-mbstring\n";
+			echo "   phpenmod -v $v mbstring\n\n";
 			$d = true;
 		}
 		
 		# Check php curl library 
 		if (!function_exists('curl_version') ) {
-			echo " PHP curl library not installed !\n";
+			echo " \nPHP curl library not installed !\n";
 			echo " To install and enable the library run commands below:\n\n";
-			echo "   sudo apt install php$v-curl";
-			echo "   phpenmod -v $v curl";
+			echo "   sudo apt install php$v-curl\n";
+			echo "   phpenmod -v $v curl\n\n";
 			$d = true;
 		}
 		
