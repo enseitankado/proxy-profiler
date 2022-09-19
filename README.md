@@ -1,3 +1,37 @@
+$ php proxyprof.php
+
+ Author ozgurkoca: github.com/enseitankado/
+
+ -h                     Show this help.
+ -p <host:ip>           Check proxy(s). Comma supported.
+ -t <type>              Proxy types: http/https, socks4, socks5
+ -f <file_name>         Input proxy file. Each line has an IP:port
+ -o <file_name/STDOUT>  Output proxy file or STDOUT ('STDOUT' is casesensitive).
+ -l <level>             Min proxy level output filter. Defeault: 3
+ -n <num>               Thread count. Default: 250
+ -c <secs>              Connection timeout. Default: 5 secs.
+ -a <URL>               Blocking test URL. Ex. cloudflare.com protected web service.
+ -j <URL>               Judge URL. Default: random azenv.php
+ -s                     Silent. No output.
+ -g                     List only good proxies.
+ -r                     Show progress bar.
+
+ Current Installation:
+
+   PHP 7.4.20
+   CURL 7.70.0
+   OpenSSL 1.1.1k  25 Mar 2021
+
+ About proxy levels:
+
+   1: Elite proxy servers hide both your IP address and the fact that you are using a proxy server at all.
+   2: An anonymous proxy does not reveal your IP address but does reveal that you are using a proxy server.
+   3: Transparent proxies do not hide your IP Address and they don’t alter any user information.
+
+
+
+
+
 If input proxy file and output name is same and output file not empty then output list merged into input proxy file and will be scanned alltogether again.
 
 

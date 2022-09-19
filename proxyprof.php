@@ -63,10 +63,7 @@
 	}
 	
 	//****************************************************************
-	
-	
 
-	
 	/**
 	 * The main function to checks and profiles proxy(ies)
 	 *
