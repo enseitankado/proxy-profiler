@@ -163,16 +163,6 @@ Use STDIN to input scan list example-2:
     cat socks4.lst | php proxycheck.php -t socks4 -n 1000 -g
 
 
-# Donation
-
-If you want to buy my coffee, you can send payments Paypal.
-
-# Author
-
-I'm Özgür. I'm a teacher at a vocational [school](https://samsuneml.meb.k12.tr/)
-Repos: https://github.com/enseitankado
-Blog: www.tankado.com
-
 # Disclaimer
 
 This is an open source for everyone, you may redistribute, modify, use patents and use privately without any obligation to redistribute. but it should be noted to include the source code of the library that was modified (not the source code of the entire program), include the license, include the original copyright of the author (warifp), and include any changes made (if modified). Users do not have the right to sue the creator when there is damage to the software or even demand if there is a problem caused by the makers of this tool. because every risk is caused by the user risk itself.
@@ -194,5 +184,14 @@ SOCKS5 supports multiple authentication methods, SOCKS4 does not support authent
 SOCKS5 supports UDP proxy, SOCKS4 does not support UDP proxy;
 SOCKS5 is more secure because it uses an authenticated TCP connections and SSH encrypted tunnels;
 
+# Donation
+
+If you want to buy my coffee, you can send payments Paypal.
+
+# Author
+
+I'm Özgür. I'm a teacher at a vocational [school](https://samsuneml.meb.k12.tr/)
+Repos: https://github.com/enseitankado
+Blog: www.tankado.com
 
 
