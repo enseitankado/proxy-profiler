@@ -64,34 +64,8 @@
 	
 	//****************************************************************
 	
-	function check_prequistics() {
-		
-		$d = false;
-		$v = phpversion();		
-		$pos1 = strpos($v, '.');
-		$v = substr($v, 0, strpos($v, '.', $pos1 + 1));
-		
-		# Check PHP multibyte support
-		if (! function_exists('mb_check_encoding') ) {
-			echo " \nMultibyte string (mb_) library not installed !\n";
-			echo " To install and enable the library run commands below:\n\n";
-			echo "   sudo apt install php$v-mbstring\n";
-			echo "   phpenmod -v $v mbstring\n\n";
-			$d = true;
-		}
-		
-		# Check php curl library 
-		if (!function_exists('curl_version') ) {
-			echo " \nPHP curl library not installed !\n";
-			echo " To install and enable the library run commands below:\n\n";
-			echo "   sudo apt install php$v-curl\n";
-			echo "   phpenmod -v $v curl\n\n";
-			$d = true;
-		}
-		
-		if ($d) die();
-	}
 	
+
 	
 	/**
 	 * The main function to checks and profiles proxy(ies)
@@ -264,7 +238,7 @@
 			echo "   2: An anonymous proxy does not reveal your IP address but does reveal that you are using a proxy server.\n";
 			echo "   3: Transparent proxies do not hide your IP Address and they don’t alter any user information.\n\n";
 			global $start;
-			echo " Scan completed in ".floor((microtime(true) - $start))." seconds.\n";
+			echo " Scan completed in ".floor((microtime(true) - $start))." seconds.\n\n";
 		}
 	}
 
@@ -578,4 +552,39 @@
 		else
 			return 0;
 	}
+	
+	/**
+	 * Check prequistics of The Proxy Profiler
+	 * If it failed advice and exit.
+	 *
+	 * @return No return.
+	 */	
+	function check_prequistics() {
+		
+		$d = false;
+		$v = phpversion();		
+		$pos1 = strpos($v, '.');
+		$v = substr($v, 0, strpos($v, '.', $pos1 + 1));
+		
+		# Check PHP multibyte support
+		if (!function_exists('mb_check_encoding') ) {
+			echo "\n Multibyte string (mb_) library not installed !\n";
+			echo " To install and enable the library run commands below:\n\n";
+			echo "   sudo apt install php$v-mbstring\n";
+			echo "   sudo phpenmod -v $v mbstring\n\n";
+			$d = true;
+		}
+		
+		# Check php curl library 
+		if (!function_exists('curl_version') ) {
+			echo "\n PHP curl library not installed !\n";
+			echo " To install and enable the library run commands below:\n\n";
+			echo "   sudo apt install php$v-curl\n";
+			echo "   sudo phpenmod -v $v curl\n\n";
+			$d = true;
+		}
+		
+		if ($d) die();
+	}
+	
 ?>
