@@ -74,7 +74,7 @@
 		
 		# Parse arguments and initialize		
 		$proxy_arr 		= is_array($cmd['p']) 	? $cmd['p'] : array($cmd['p']);		
-		$thread_count 	= isset($cmd['m']) 		? $cmd['m'] : 5;
+		$thread_count 	= isset($cmd['n']) 		? $cmd['n'] : 250;
 		$time_out 		= isset($cmd['c']) 		? $cmd['c'] : 5;		
 		$min_level		= isset($cmd['l']) 		? $cmd['l'] : 3;
 		$proxy_type 	= strtoupper($cmd['t']);
@@ -100,6 +100,7 @@
 			}
 		}
 		
+		# Dont display cosmetics
 		if ($cmd['o'] == 'STDOUT')
 			$cmd['s'] = true;
 		
@@ -111,6 +112,7 @@
 			echo "   Min.ProxyLevel \t= $min_level\n";
 			echo "   Timeout \t\t= $time_out seconds\n";
 			echo "   Input proxy \t\t= ".count($proxy_list)."\n";
+			echo "   Thread count \t= $thread_count\n";
 		}
 	
 		# Progress bar
@@ -129,7 +131,7 @@
 		$multi_curl = new MultiCurl();
 		$multi_curl->setUserAgent(random_user_agent());
 		$multi_curl->setConnectTimeout($time_out);
-		$multi_curl->setConcurrency(isset($cmd['n']) ? $cmd['n'] : 250);
+		$multi_curl->setConcurrency($thread_count);
 		$multi_curl->setOpt(CURLOPT_TIMEOUT, $time_out);		
 		$multi_curl->setOpt(CURLOPT_FOLLOWLOCATION, 1);		
 		$multi_curl->setOpt(CURLOPT_SSL_VERIFYHOST, 0);

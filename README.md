@@ -18,11 +18,9 @@ PHP, Curl, PHP-Curl extension, [PHP-Curl class](https://github.com/php-curl-clas
 
 # Installation
 
+```bash
     $ git clone https://github.com/enseitankado/proxy-profiler.git
     $ cd proxy-profiler
-   
-
----
 	 $ php proxyprof.php -h
   
      Author ozgurkoca: github.com/enseitankado/
@@ -52,10 +50,10 @@ PHP, Curl, PHP-Curl extension, [PHP-Curl class](https://github.com/php-curl-clas
        1: Elite proxy servers hide both your IP address and the fact that you are using a proxy server at all.
        2: An anonymous proxy does not reveal your IP address but does reveal that you are using a proxy server.
        3: Transparent proxies do not hide your IP Address and they don’t alter any user information.
-
+```
 
 proxyprof is PHP-Cli tool and requires some librarys. When you run the tool for the first time, it tests whether the required plug-ins are installed. If it is not installed, it stops working and lists the tools that need to be installed. For example:
-
+```bash
     $ php proxyprof.php
     
      Multibyte string (mb_) library not installed !
@@ -70,6 +68,8 @@ proxyprof is PHP-Cli tool and requires some librarys. When you run the tool for 
     
        sudo apt install php7.4-curl
        sudo phpenmod -v 7.4 curl
+```
+
 
 # Command Line Arguments
  **-h**
@@ -135,32 +135,44 @@ proxyprof is PHP-Cli tool and requires some librarys. When you run the tool for 
 
 # Examples
 Scans socks4 proxy list from socks4.lst file and display scan results.
-
+```bash
     $ php proxyprof.php -t https -f socks4.lst
+```
 
 Scans https proxy list from https.lst file and display scan results, save good proxies to goodhttps.lst in IP:PORT format.
-
+```bash
     $ php proxyprof.php -t https -f https.lst -o goodhttps.lst
+```
 
 Scans https proxy list from https.lst file and output good proxies to standart display in IP:PORT format.
-
+```bash
     $ php proxyprof.php -t https -f https.lst -o STDOUT 
+```
 
 Scan HTTPS proxy server list in multithreaded (1500 thread) with 20 seconds timeout delay. If proxy is up then reach to URL "https://www.tankado.com/" behind the CloudFlare (CF) network and test blocking or not blocking by CF. Displays only good servers with non blocked in a table. 
-
+```bash
     $ php proxyprof.php -t https -f https.lst -g -n 1500 -a https://www.tankado.com/ -c 20
+```
 
- If needed, start a SOCKS-5 proxy tunnel: 
+If needed, start a SOCKS-5 proxy tunnel: 
+```bash
+    $ ssh -D 8080 -C -N -v  user@example.com
+```
 
-     $ ssh -D 8080 -C -N -v  user@example.com
-     
+Scan two proxy:
+```bash
+    $ php proxyprof.php -t socks4 -p 103.105.41.209:4145,194.27.16.17:62013   
+```
+ 
 Use STDIN to input scan list example-1:
-
+```bash
     printf "31.44.82.182:5678\n185.139.56.133:4145" | php proxycheck.php -t socks4 -n 1000 
+```	
 
 Use STDIN to input scan list example-2:
-
+```bash
     cat socks4.lst | php proxycheck.php -t socks4 -n 1000 -g
+```
 
 
 # Disclaimer
