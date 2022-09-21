@@ -13,6 +13,7 @@ The scanner (proxyprof) scans and analyzes **http**/**https**/**socks4**/**socks
 ***Some features to add in future***
  - Tunneling support checking.
  - Private proxy profiling with un:pw.
+ - More comprohensive black list checking.
    
 # Requirements
 PHP, Curl, PHP-Curl extension, [PHP-Curl class](https://github.com/php-curl-class), [PHP-CLI-Progress-Bar](https://github.com/guiguiboy/PHP-CLI-Progress-Bar)
