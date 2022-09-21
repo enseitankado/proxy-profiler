@@ -32,6 +32,7 @@
 	$opts['c:'] = array("-c <secs>", 		"\t\tConnection timeout. Default: 5 secs.");	
 	$opts['a:'] = array("-a <URL>", 		"\t\tBlocking test URL. Ex. cloudflare.com protected web service.");
 	$opts['j:'] = array("-j <URL>", 		"\t\tJudge URL. Default: random azenv.php");
+	$opts['y:'] = array("-y <num>", 		"\t\tMaximum retry count if connection failed. Default: 1");
 	$opts['s'] 	= array("-s", 				"\t\t\tSilent. No output.");	
 	$opts['g'] 	= array("-g", 				"\t\t\tList only good proxies.");
 	$opts['r'] 	= array("-r", 				"\t\t\tShow progress bar.");
@@ -44,9 +45,9 @@
 		foreach($opts as $opt => $opt_arr)
 			echo ' '.$opt_arr[0].$opt_arr[1]."\n";			
 			echo "\n Current Installation:\n\n";
-			echo "   PHP ".phpversion()."\n";
+			echo "   PHP ".phpversion().", Memory Limit: ".return_bytes(ini_get('memory_limit'))."\n";
 			echo "   CURL ".curl_version()["version"]."\n";
-			echo "   ".OPENSSL_VERSION_TEXT."\n";			
+			echo "   ".OPENSSL_VERSION_TEXT."\n";
 			echo "\n About proxy levels:\n\n";
 			echo "   1: Elite proxy servers hide both your IP address and the fact that you are using a proxy server at all.\n";			
 			echo "   2: An anonymous proxy does not reveal your IP address but does reveal that you are using a proxy server.\n";
@@ -77,6 +78,7 @@
 		$thread_count 	= isset($cmd['n']) 		? $cmd['n'] : 250;
 		$time_out 		= isset($cmd['c']) 		? $cmd['c'] : 5;		
 		$min_level		= isset($cmd['l']) 		? $cmd['l'] : 3;
+		$max_retries	= isset($cmd['y']) 		? $cmd['y'] : 1;
 		$proxy_type 	= strtoupper($cmd['t']);
 		$user_agent 	= 'Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1)';
 		$proxy_list		= build_proxy_list($cmd);
@@ -132,6 +134,7 @@
 		$multi_curl->setUserAgent(random_user_agent());
 		$multi_curl->setConnectTimeout($time_out);
 		$multi_curl->setConcurrency($thread_count);
+		$multi_curl->setRetry($max_retries);
 		$multi_curl->setOpt(CURLOPT_TIMEOUT, $time_out);		
 		$multi_curl->setOpt(CURLOPT_FOLLOWLOCATION, 1);		
 		$multi_curl->setOpt(CURLOPT_SSL_VERIFYHOST, 0);
@@ -585,5 +588,27 @@
 		
 		if ($d) die();
 	}
+
+	/**
+	* Converts shorthand memory notation value to bytes
+	* From http://php.net/manual/en/function.ini-get.php
+	*
+	* @param $val Memory size shorthand notation string
+	*/
+	function return_bytes($val) {
+		$val = trim($val);
+		$last = strtolower($val[strlen($val)-1]);
+		$val = substr($val, 0, -1);
+		switch($last) {
+			// The 'G' modifier is available since PHP 5.1.0
+			case 'g':
+				$val *= 1024;
+			case 'm':
+				$val *= 1024;
+			case 'k':
+				$val *= 1024;
+		}
+		return $val;
+	}	
 	
 ?>

@@ -5,23 +5,25 @@ The scanner (proxyprof) scans and analyzes **http**/**https**/**socks4**/**socks
 
 ***Some interesting features:***
 
- - It can analyze the security level of the proxy. Security levels are
-   described below (Elite/Anon/Transparent).
- - It can check if the proxy has permission from a firewall. For
-   example, it can test whether the place reaches a computer on the
-   cloudflare network.
- - It can receive input from standard input (STDIN). This allows
-   chaining with other tools using pipe.
+ - Detects security level of the proxy. Elite, Anon or Transparent.
+ - Checks if the proxy has permission from any firewall.
+ - Receives input from STDIN and transmits to STDOUT which allows
+   chaining with other tools.
+   
+***Some features to add in future***
+ - Tunneling support checking.
+ - Private proxy profiling with un:pw.
    
 # Requirements
 PHP, Curl, PHP-Curl extension, [PHP-Curl class](https://github.com/php-curl-class), [PHP-CLI-Progress-Bar](https://github.com/guiguiboy/PHP-CLI-Progress-Bar)
+> Note: proxyprof use modified version of PHP-Curl class so do not update the library.
 
 # Installation
 
 ```bash
     $ git clone https://github.com/enseitankado/proxy-profiler.git
     $ cd proxy-profiler
-	 $ php proxyprof.php -h
+	$ php proxyprof.php -h
   
      Author ozgurkoca: github.com/enseitankado/
     
@@ -53,6 +55,7 @@ PHP, Curl, PHP-Curl extension, [PHP-Curl class](https://github.com/php-curl-clas
 ```
 
 proxyprof is PHP-Cli tool and requires some librarys. When you run the tool for the first time, it tests whether the required plug-ins are installed. If it is not installed, it stops working and lists the tools that need to be installed. For example:
+
 ```bash
     $ php proxyprof.php
     
@@ -112,7 +115,19 @@ proxyprof is PHP-Cli tool and requires some librarys. When you run the tool for 
 
  
  **-n \<num>**
- Thread count. Default: 250. proxyprof can perform multiple simultaneous scans with low resource requirements. This saves a lot of time, especially when tens of thousands of proxies need to be scanned.
+ Thread count. Default: 250. proxyprof can perform multiple simultaneous scans with low resource requirements. This saves a lot of time, especially when tens of thousands of proxies need to be scanned. 
+
+> **Hint 1:** The firewall on your line may be configured against opening 
+> a large number of TCP connections in a short time. Especially when scanning 
+> SOCKS4/SOCKS5 servers, it opens a lot of sockets in a short time. 
+> If you get a meaningless amount of failed scan results, try again 
+> by reducing the number of threads. For example, set the number of threads 
+> between 1-5. The default value is 250.
+
+> **Hint 2:** If you get PHP memory allocate error, reduce the number of threads or 
+> increase the memory limit that can be used with the -d parameter 
+> of the php interpreter. 
+> For example php -d memory_limit=500MB script_to_run.php
  
  **-c \<secs>**
  Connection timeout. Default: 5 secs. During the handshake process with a proxy, it waits for a certain maximum amount of time to respond to the connection request. Otherwise, the connection will remain open for a long time, causing excessive resource consumption and reduced browsing speed. If the time defined by this parameter is exceeded, it is judged that the proxy is not responding. A good proxy should respond instantly and quickly.
@@ -166,12 +181,12 @@ Scan two proxy:
  
 Use STDIN to input scan list example-1:
 ```bash
-    printf "31.44.82.182:5678\n185.139.56.133:4145" | php proxycheck.php -t socks4 -n 1000 
+    $ printf "31.44.82.182:5678\n185.139.56.133:4145" | php proxycheck.php -t socks4 -n 1000 
 ```	
 
 Use STDIN to input scan list example-2:
 ```bash
-    cat socks4.lst | php proxycheck.php -t socks4 -n 1000 -g
+    $ cat socks4.lst | php proxycheck.php -t socks4 -n 1000 -g
 ```
 
 
@@ -205,5 +220,3 @@ If you want to buy my coffee, you can send payments Paypal.
 I'm Özgür. I'm a teacher at a vocational [school](https://samsuneml.meb.k12.tr/)
 Repos: https://github.com/enseitankado
 Blog: www.tankado.com
-
-
