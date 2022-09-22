@@ -214,7 +214,7 @@ SOCKS5 is more secure because it uses an authenticated TCP connections and SSH e
 
 # Donation
 
-If you want to buy my coffee, you can send payments Paypal.
+Would you like to buy me a coffee? [Click](https://www.buymeacoffee.com/ozgurkoca).
 
 # Author
 
