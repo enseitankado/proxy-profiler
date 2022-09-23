@@ -7,13 +7,12 @@ The scanner (proxyprof) scans and analyzes **http**/**https**/**socks4**/**socks
 
  - Detects security level of the proxy. Elite, Anon or Transparent.
  - Checks if the proxy has permission from any firewall.
- - Receives input from STDIN and transmits to STDOUT which allows
-   chaining with other tools.
+ - Receives input from STDIN and transmits to STDOUT which allows chaining with other tools.
    
 ***Some features to add in future***
- - Tunneling support checking.
- - Private proxy profiling with un:pw.
- - More comprohensive black list checking.
+ - Checking tunneling support.
+ - Private (password protected) proxy support un:pw.
+ - Comprohensive black-list/ban-list checking.
    
 # Requirements
 PHP, Curl, PHP-Curl extension, [PHP-Curl class](https://github.com/php-curl-class), [PHP-CLI-Progress-Bar](https://github.com/guiguiboy/PHP-CLI-Progress-Bar)
