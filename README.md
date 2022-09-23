@@ -212,6 +212,10 @@ SOCKS5 supports multiple authentication methods, SOCKS4 does not support authent
 SOCKS5 supports UDP proxy, SOCKS4 does not support UDP proxy;
 SOCKS5 is more secure because it uses an authenticated TCP connections and SSH encrypted tunnels;
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=enseitankado/proxy-profiler&type=Date)](https://star-history.com/#enseitankado/proxy-profiler&Date)
+
 # Donation
 
 Would you like to buy me a coffee? [Click](https://www.buymeacoffee.com/ozgurkoca).
