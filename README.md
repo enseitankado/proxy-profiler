@@ -23,7 +23,7 @@ PHP, Curl, PHP-Curl extension, [PHP-Curl class](https://github.com/php-curl-clas
 
 ```bash
     $ git clone https://github.com/enseitankado/proxy-profiler.git
-    $ cd proxy-profiler
+	$ cd proxy-profiler
 	$ php proxyprof.php -h
   
      Author ozgurkoca: github.com/enseitankado/

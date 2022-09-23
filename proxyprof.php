@@ -88,7 +88,7 @@
 		$cmd['bad_count'] = $cmd['good_count'] = 0;		
 		$cmd['public_ip'] = get_public_ip();
 		$cmd['min_proxy_level'] = $min_level;
-		
+
 		# Merge output file to input list
 		if (isset($cmd['f']) and isset($cmd['o']) and $cmd['o'] != 'STDOUT') {
 			if ($cmd['f'] != $cmd['o']) {
@@ -125,122 +125,119 @@
 			$progressBar->addReplacementRule('%good%', 70, function ($buffer, $registry) {global $cmd; return $cmd['good_count'];});
 		}
 		
-		# --------------
-		# Init MultiCurl
-		# --------------
-		if (!isset($cmd['s'])) 
-			echo "\n";
-		$multi_curl = new MultiCurl();
-		$multi_curl->setUserAgent(random_user_agent());
-		$multi_curl->setConnectTimeout($time_out);
-		$multi_curl->setConcurrency($thread_count);
-		$multi_curl->setRetry($max_retries);
-		$multi_curl->setOpt(CURLOPT_TIMEOUT, $time_out);		
-		$multi_curl->setOpt(CURLOPT_FOLLOWLOCATION, 1);		
-		$multi_curl->setOpt(CURLOPT_SSL_VERIFYHOST, 0);
-		$multi_curl->setOpt(CURLOPT_SSL_VERIFYPEER, 0);
-		$multi_curl->setOpt(CURLOPT_SSL_VERIFYSTATUS, 0);
-		//$multi_curl->setOpt(CURLOPT_HEADER, 1); # Debug
-		//$multi_curl->setOpt(CURLOPT_RETURNTRANSFER, 0); # Debug		
-		$multi_curl->setProxyType(get_curl_proxy_type($cmd));
-		
-		$multi_curl->setProxies($proxy_list); 		// Droped: Assign random proxies to every curl instances		
-		for ($i=0; $i<count($proxy_list); $i++)  	// Load judge URLs		
-			$multi_curl->addGet($judge_url);
-		
-		# ---------------
-		# Define listener 
-		# ---------------
-		$multi_curl->complete(function ($instance) {
-			
-			
-			echo formatBytes(memory_get_usage())." - ".formatBytes(memory_get_usage(true))."\n";
-			
-			
-    // Memory usage: 4.55 GiB / 23.91 GiB (19.013557664178%)
-    $memUsage = getServerMemoryUsage(false);
-    echo sprintf("Memory usage: %s / %s (%s%%)\n",
-        getNiceFileSize($memUsage["total"] - $memUsage["free"]),
-        getNiceFileSize($memUsage["total"]),
-        getServerMemoryUsage(true)
-    );			
-			
-			
-			global $cmd, $goods;
-			$blocking = 'Not tested';
-			$curl_info = $instance->getInfo();
-			$url = $instance->url;			
-			$proxy_type =  strtoupper($cmd['t']);
-			$proxy_ip_port = $instance->getOpt(CURLOPT_PROXY);
-			$proxy_id = ++$cmd['proxy_id'];
-			
-			# ------------
-			# Bad proxy(s)
-			# ------------
-			if ($instance->curlError or $instance->httpError) {
-				$status = 'Bad';
-				$cmd['info'] = 'Error: ' . $instance->errorCode . ', ' . $instance->errorMessage.'.';				
-				$cmd['bad_count']++;
-				
-			# -------------
-			# Good proxy(s)
-			# -------------
-			} else {
-				$status = 'Good';
-				$goods[] = $proxy_ip_port;
-				$cmd['good_count'] = count($goods);
-				$judge_headers = build_proxied_response_header($instance->rawResponse);											
-				$proxy_outbound_ip = $judge_headers['remote_addr'];				
-				$proxy_level = get_proxy_level($judge_headers, $public_ip);
-				
-				if ($proxy_level > $cmd['min_proxy_level'])
-					return;
-			
-				$cmd['info'] = get_proxy_infrastructure($judge_headers, $proxy_ip_port, $public_ip);
-				$time = round($curl_info['total_time_us']/1000000, 1);
-				
-				# Blacklist test
-				if (isset($cmd['a']))
-					$blocking = blocking_test($proxy_ip_port, $cmd);
-				
-				# Save good proxy(s)
-				global $cmd;
-				if ($cmd['o'] == 'STDOUT') {					
-					echo $proxy_ip_port.PHP_EOL;					
-				} else if (isset($cmd['o']) and $blocking == 'No') {					
-					file_put_contents($cmd['o'], $proxy_ip_port.PHP_EOL, FILE_APPEND);
-				}
-			}
-			
-			# Table: Scan results
-			$mask = "%7.7s |%5.5s | %21.21s | %7.7s | %17.17s | %6.6s | %5.5s | %11.11s | %s \n";
-			if (!isset($cmd['s']) and !isset($cmd['r'])) # No silent, No progress
-				if (isset($cmd['g'])) { # Only goods
-					if ($status == 'Good')
-						if (isset($cmd['a'])) { # Access test
-							if ($blocking == 'No')
-								printf($mask, $cmd['good_count'], $status, $proxy_ip_port, $proxy_type, $proxy_outbound_ip, $proxy_level, $time, $blocking, $cmd['info']);
-						} else
-							printf($mask, $cmd['good_count'], $status, $proxy_ip_port, $proxy_type, $proxy_outbound_ip, $proxy_level, $time, $blocking, $cmd['info']);
-				} else # Goods and Bads
-					printf($mask, $proxy_id, $status, $proxy_ip_port, $proxy_type, $proxy_outbound_ip, $proxy_level, $time, $blocking, $cmd['info']);
-			
-			# Progress bar
-			if (isset($cmd['r']) and !isset($cmd['s'])) {
-				global $progressBar;
-				$progressBar->update($proxy_id);
-			}			
-		});
-		
 		# Table Header: Scan results
 		if (!isset($cmd['s']) and !isset($cmd['r'])) { # No silent, No progress
+			echo "\n";
 			$mask = "%7.7s |%5.5s | %21.21s | %7.7s | %17.17s | %6.6s | %5.5s | %11.11s | %s \n";		
 			printf($mask, 'Num', 'Stat', 'Proxy', 'Type', 'Proxy Outbound IP', 'Level', 'Time', 'Blocking', 'Info');
 			echo " ".str_repeat('~', 155)."\n";
 		}
 		
-		$multi_curl->start();	
+		
+		# To reduce memory comsumption slice the list to chunks
+		$chunked_proxies = array_chunk($proxy_list, $thread_count);
+		foreach ($chunked_proxies as $proxies) {
+		
+			# --------------
+			# Init MultiCurl
+			# --------------
 
+			$multi_curl = new MultiCurl();
+			$multi_curl->setUserAgent(random_user_agent());
+			$multi_curl->setConnectTimeout($time_out);
+			$multi_curl->setConcurrency($thread_count);
+			$multi_curl->setRetry($max_retries);
+			$multi_curl->setOpt(CURLOPT_TIMEOUT, $time_out);		
+			$multi_curl->setOpt(CURLOPT_FOLLOWLOCATION, 1);		
+			$multi_curl->setOpt(CURLOPT_SSL_VERIFYHOST, 0);
+			$multi_curl->setOpt(CURLOPT_SSL_VERIFYPEER, 0);
+			$multi_curl->setOpt(CURLOPT_SSL_VERIFYSTATUS, 0);
+			//$multi_curl->setOpt(CURLOPT_HEADER, 1); # Debug
+			//$multi_curl->setOpt(CURLOPT_RETURNTRANSFER, 0); # Debug		
+			$multi_curl->setProxyType(get_curl_proxy_type($cmd));
+			
+			$multi_curl->setProxies($proxies); 		// Modified: Assign random proxies to every curl instances droped.
+			$proxy_count = count($proxies);
+			
+			for ($i=0; $i<$proxy_count; $i++)  	// Load judge URLs		
+				$multi_curl->addGet($judge_url);
+					
+			# ---------------
+			# Define listener 
+			# ---------------
+			$multi_curl->complete(function ($instance) {		
+				
+				global $cmd, $goods;
+				$blocking = 'Not tested';
+				$curl_info = $instance->getInfo();
+				$url = $instance->url;			
+				$proxy_type =  strtoupper($cmd['t']);
+				$proxy_ip_port = $instance->getOpt(CURLOPT_PROXY);
+				$proxy_id = ++$cmd['proxy_id'];
+				
+				# ------------
+				# Bad proxy(s)
+				# ------------
+				if ($instance->curlError or $instance->httpError) {
+					$status = 'Bad';
+					$cmd['info'] = 'Error: ' . $instance->errorCode . ', ' . $instance->errorMessage.'.';				
+					$cmd['bad_count']++;
+					
+				# -------------
+				# Good proxy(s)
+				# -------------
+				} else {
+					$status = 'Good';
+					$goods[] = $proxy_ip_port;
+					$cmd['good_count'] = count($goods);
+					$judge_headers = build_proxied_response_header($instance->rawResponse);											
+					$proxy_outbound_ip = $judge_headers['remote_addr'];				
+					$proxy_level = get_proxy_level($judge_headers, $public_ip);
+					
+					if ($proxy_level > $cmd['min_proxy_level'])
+						return;
+				
+					$cmd['info'] = get_proxy_infrastructure($judge_headers, $proxy_ip_port, $public_ip);
+					$time = round($curl_info['total_time_us']/1000000, 1);
+					
+					# Blacklist test
+					if (isset($cmd['a']))
+						$blocking = blocking_test($proxy_ip_port, $cmd);
+					
+					# Save good proxy(s)
+					global $cmd;
+					if ($cmd['o'] == 'STDOUT') {					
+						echo $proxy_ip_port.PHP_EOL;					
+					} else if (isset($cmd['o']) and $blocking == 'No') {					
+						file_put_contents($cmd['o'], $proxy_ip_port.PHP_EOL, FILE_APPEND);
+					}
+				}
+				
+				# Table: Scan results
+				$mask = "%7.7s |%5.5s | %21.21s | %7.7s | %17.17s | %6.6s | %5.5s | %11.11s | %s \n";
+				if (!isset($cmd['s']) and !isset($cmd['r'])) # No silent, No progress
+					if (isset($cmd['g'])) { # Only goods
+						if ($status == 'Good')
+							if (isset($cmd['a'])) { # Access test
+								if ($blocking == 'No')
+									printf($mask, $cmd['good_count'], $status, $proxy_ip_port, $proxy_type, $proxy_outbound_ip, $proxy_level, $time, $blocking, $cmd['info']);
+							} else
+								printf($mask, $cmd['good_count'], $status, $proxy_ip_port, $proxy_type, $proxy_outbound_ip, $proxy_level, $time, $blocking, $cmd['info']);
+					} else # Goods and Bads
+						printf($mask, $proxy_id, $status, $proxy_ip_port, $proxy_type, $proxy_outbound_ip, $proxy_level, $time, $blocking, $cmd['info']);
+				
+				# Progress bar
+				if (isset($cmd['r']) and !isset($cmd['s'])) {
+					global $progressBar;
+					$progressBar->update($proxy_id);
+				}			
+			});
+					
+			$multi_curl->start();
+		
+		} // End chunked proxy list
+		
+		
 		global $goods;
 		
 		if (isset($cmd['o']))
@@ -623,125 +620,5 @@
 		}
 		return $val;
 	}	
-	
-	
-	
-	
-	
-	
-	
-	function formatBytes($bytes, $precision = 2) { 
-    $units = array('B', 'KB', 'MB', 'GB', 'TB'); 
-
-    $bytes = max($bytes, 0); 
-    $pow = floor(($bytes ? log($bytes) : 0) / log(1024)); 
-    $pow = min($pow, count($units) - 1); 
-
-    // Uncomment one of the following alternatives
-    $bytes /= pow(1024, $pow);
-    // $bytes /= (1 << (10 * $pow)); 
-
-    return round($bytes, $precision) . ' ' . $units[$pow]; 
-}
-
-
-    // Returns used memory (either in percent (without percent sign) or free and overall in bytes)
-    function getServerMemoryUsage($getPercentage=true)
-    {
-        $memoryTotal = null;
-        $memoryFree = null;
-
-        if (stristr(PHP_OS, "win")) {
-            // Get total physical memory (this is in bytes)
-            $cmd = "wmic ComputerSystem get TotalPhysicalMemory";
-            @exec($cmd, $outputTotalPhysicalMemory);
-
-            // Get free physical memory (this is in kibibytes!)
-            $cmd = "wmic OS get FreePhysicalMemory";
-            @exec($cmd, $outputFreePhysicalMemory);
-
-            if ($outputTotalPhysicalMemory && $outputFreePhysicalMemory) {
-                // Find total value
-                foreach ($outputTotalPhysicalMemory as $line) {
-                    if ($line && preg_match("/^[0-9]+\$/", $line)) {
-                        $memoryTotal = $line;
-                        break;
-                    }
-                }
-
-                // Find free value
-                foreach ($outputFreePhysicalMemory as $line) {
-                    if ($line && preg_match("/^[0-9]+\$/", $line)) {
-                        $memoryFree = $line;
-                        $memoryFree *= 1024;  // convert from kibibytes to bytes
-                        break;
-                    }
-                }
-            }
-        }
-        else
-        {
-            if (is_readable("/proc/meminfo"))
-            {
-                $stats = @file_get_contents("/proc/meminfo");
-
-                if ($stats !== false) {
-                    // Separate lines
-                    $stats = str_replace(array("\r\n", "\n\r", "\r"), "\n", $stats);
-                    $stats = explode("\n", $stats);
-
-                    // Separate values and find correct lines for total and free mem
-                    foreach ($stats as $statLine) {
-                        $statLineData = explode(":", trim($statLine));
-
-                        //
-                        // Extract size (TODO: It seems that (at least) the two values for total and free memory have the unit "kB" always. Is this correct?
-                        //
-
-                        // Total memory
-                        if (count($statLineData) == 2 && trim($statLineData[0]) == "MemTotal") {
-                            $memoryTotal = trim($statLineData[1]);
-                            $memoryTotal = explode(" ", $memoryTotal);
-                            $memoryTotal = $memoryTotal[0];
-                            $memoryTotal *= 1024;  // convert from kibibytes to bytes
-                        }
-
-                        // Free memory
-                        if (count($statLineData) == 2 && trim($statLineData[0]) == "MemFree") {
-                            $memoryFree = trim($statLineData[1]);
-                            $memoryFree = explode(" ", $memoryFree);
-                            $memoryFree = $memoryFree[0];
-                            $memoryFree *= 1024;  // convert from kibibytes to bytes
-                        }
-                    }
-                }
-            }
-        }
-
-        if (is_null($memoryTotal) || is_null($memoryFree)) {
-            return null;
-        } else {
-            if ($getPercentage) {
-                return (100 - ($memoryFree * 100 / $memoryTotal));
-            } else {
-                return array(
-                    "total" => $memoryTotal,
-                    "free" => $memoryFree,
-                );
-            }
-        }
-    }
-
-    function getNiceFileSize($bytes, $binaryPrefix=true) {
-        if ($binaryPrefix) {
-            $unit=array('B','KiB','MiB','GiB','TiB','PiB');
-            if ($bytes==0) return '0 ' . $unit[0];
-            return @round($bytes/pow(1024,($i=floor(log($bytes,1024)))),2) .' '. (isset($unit[$i]) ? $unit[$i] : 'B');
-        } else {
-            $unit=array('B','KB','MB','GB','TB','PB');
-            if ($bytes==0) return '0 ' . $unit[0];
-            return @round($bytes/pow(1000,($i=floor(log($bytes,1000)))),2) .' '. (isset($unit[$i]) ? $unit[$i] : 'B');
-        }
-    }
 
 ?>
