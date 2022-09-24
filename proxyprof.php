@@ -55,7 +55,7 @@
 		exit(0);
 	}
 	
-	if (posix_isatty(STDIN))
+	if (!posix_isatty(STDIN))
 		$cmd['stdin'] = file_get_contents('php://stdin');
 	
 	# Scan proxies
@@ -533,37 +533,6 @@
 			$headers[strtolower(trim($line_arr[0]))] = trim($line_arr[1]);			
 		}
 		return $headers;
-	}
-	
-	/**
-	 * Check STDIN input and If STDIN exists then return,
-	 * otherwise return 0.
-	 *	 
-	 * @return STDIN input as string.
-	 */		
-	function read_STDIN() {
-
-		function CheckSTDIN() {
-			$read = array(STDIN);
-			$wrte = NULL;
-			$expt = NULL;
-			$a = stream_select($read, $wrte, $expt, 0);
-			if ($a && in_array(STDIN, $read)) {
-				return fread(STDIN, 10*1024*1024);
-			} else return false;
-		}
-
-		stream_set_blocking(STDIN, 1);
-		
-		while (FALSE !== ($line = CheckSTDIN()))
-			$ret .= $line;
-		
-		$ret = trim($ret);
-		
-		if (!empty($ret))
-			return $ret;
-		else
-			return 0;
 	}
 	
 	/**
