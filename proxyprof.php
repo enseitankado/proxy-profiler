@@ -14,10 +14,6 @@
 	foreach (glob(__DIR__ . '/lib/php-curl-class/src/Curl/*.php') as $filename)
 		require_once $filename;
 	
-	echo $stdin = read_STDIN(); 
-	die("bitti");
-	
-	
 	use Curl\Curl;
 	use Curl\MultiCurl;	
 	$start = microtime(true);
