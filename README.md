@@ -21,56 +21,56 @@ PHP, Curl, PHP-Curl extension, [PHP-Curl class](https://github.com/php-curl-clas
 # Installation
 
 ```bash
-    $ git clone https://github.com/enseitankado/proxy-profiler.git
-	$ cd proxy-profiler
-	$ php proxyprof.php -h
-  
-     Author ozgurkoca: github.com/enseitankado/
-    
-     -h                     Show this help.
-     -p <host:ip>           Check proxy(s). Comma supported.
-     -t <type>              Proxy types: http/https, socks4, socks5
-     -f <file_name>         Input proxy file. Each line has an IP:port
-     -o <file_name/STDOUT>  Output proxy file or STDOUT ('STDOUT' is casesensitive).
-     -l <level>             Min proxy level output filter. Defeault: 3
-     -n <num>               Thread count. Default: 250
-     -c <secs>              Connection timeout. Default: 5 secs.
-     -a <URL>               Blocking test URL. Ex. cloudflare.com protected web service.
-     -j <URL>               Judge URL. Default: random azenv.php
-     -s                     Silent. No output.
-     -g                     List only good proxies.
-     -r                     Show progress bar.
-    
-     Current Installation:
-    
-       PHP 7.4.20
-       CURL 7.70.0
-       OpenSSL 1.1.1k  25 Mar 2021
-    
-     About proxy levels:
-    
-       1: Elite proxy servers hide both your IP address and the fact that you are using a proxy server at all.
-       2: An anonymous proxy does not reveal your IP address but does reveal that you are using a proxy server.
-       3: Transparent proxies do not hide your IP Address and they don’t alter any user information.
+$ git clone https://github.com/enseitankado/proxy-profiler.git
+$ cd proxy-profiler
+$ php proxyprof.php -h
+
+ Author ozgurkoca: github.com/enseitankado/
+
+ -h                     Show this help.
+ -p <host:ip>           Check proxy(s). Comma supported.
+ -t <type>              Proxy types: http/https, socks4, socks5
+ -f <file_name/STDIN>   Input proxy file. Each line has an IP:port. STDIN supported.
+ -o <file_name/STDOUT>  Output proxy file or STDOUT ('STDOUT' is casesensitive).
+ -l <level>             Min proxy level output filter. Defeault: 3
+ -n <num>               Thread count. Default: 250
+ -c <secs>              Connection timeout. Default: 5 secs.
+ -a <URL>               Blocking test URL. Ex. cloudflare.com protected web service.
+ -j <URL>               Judge URL. Default: random azenv.php
+ -s                     Silent. No output.
+ -g                     List only good proxies.
+ -r                     Show progress bar.
+
+ Current Installation:
+
+   PHP 7.4.20
+   CURL 7.70.0
+   OpenSSL 1.1.1k  25 Mar 2021
+
+ About proxy levels:
+
+   1: Elite proxy servers hide both your IP address and the fact that you are using a proxy server at all.
+   2: An anonymous proxy does not reveal your IP address but does reveal that you are using a proxy server.
+   3: Transparent proxies do not hide your IP Address and they don’t alter any user information.
 ```
 
 proxyprof is PHP-Cli tool and requires some librarys. When you run the tool for the first time, it tests whether the required plug-ins are installed. If it is not installed, it stops working and lists the tools that need to be installed. For example:
 
 ```bash
-    $ php proxyprof.php
-    
-     Multibyte string (mb_) library not installed !
-     To install and enable the library run commands below:
-    
-       sudo apt install php7.4-mbstring
-       sudo phpenmod -v 7.4 mbstring
-    
-    
-     PHP curl library not installed !
-     To install and enable the library run commands below:
-    
-       sudo apt install php7.4-curl
-       sudo phpenmod -v 7.4 curl
+$ php proxyprof.php
+
+Multibyte string (mb_) library not installed !
+To install and enable the library run commands below:
+
+	sudo apt install php7.4-mbstring
+	sudo phpenmod -v 7.4 mbstring
+
+
+PHP curl library not installed !
+To install and enable the library run commands below:
+
+	sudo apt install php7.4-curl
+	sudo phpenmod -v 7.4 curl
 ```
 
 
@@ -192,7 +192,7 @@ Use STDIN to input scan list example-2:
 
 # Disclaimer
 
-This is an open source for everyone, you may redistribute, modify, use patents and use privately without any obligation to redistribute. but it should be noted to include the source code of the library that was modified (not the source code of the entire program), include the license, include the original copyright of the author (warifp), and include any changes made (if modified). Users do not have the right to sue the creator when there is damage to the software or even demand if there is a problem caused by the makers of this tool. because every risk is caused by the user risk itself.
+This is an open source for everyone, you may redistribute, modify, use patents and use privately without any obligation to redistribute. but it should be noted to include the source code of the library that was modified (not the source code of the entire program), include the license, include the original copyright of the author (Özgür Koca), and include any changes made (if modified). Users do not have the right to sue the creator when there is damage to the software or even demand if there is a problem caused by the makers of this tool. because every risk is caused by the user risk itself.
 
 # About Proxies
 ## HTTP proxies

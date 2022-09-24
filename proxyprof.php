@@ -14,6 +14,10 @@
 	foreach (glob(__DIR__ . '/lib/php-curl-class/src/Curl/*.php') as $filename)
 		require_once $filename;
 	
+	echo $stdin = read_STDIN(); 
+	die("bitti");
+	
+	
 	use Curl\Curl;
 	use Curl\MultiCurl;	
 	$start = microtime(true);
@@ -25,7 +29,7 @@
 	$opts['h'] = array("-h", 				"\t\t\tShow this help.");
 	$opts['p:'] = array("-p <host:ip>", 	"\t\tCheck proxy(s). Comma supported.");
 	$opts['t:'] = array("-t <type>", 		"\t\tProxy types: http/https, socks4, socks5");	
-	$opts['f:'] = array("-f <file_name>", 	"\t\tInput proxy file. Each line has an IP:port");
+	$opts['f:'] = array("-f <file_name>", 	"\t\tInput proxy file. Each line has an IP:port. STDIN supported.");
 	$opts['o:'] = array("-o <file_name/STDOUT>", 	"\tOutput proxy file or STDOUT ('STDOUT' is casesensitive).");
 	$opts['l:'] = array("-l <level>", 		"\t\tMin proxy level output filter. Defeault: 3");
 	$opts['n:'] = array("-n <num>", 		"\t\tThread count. Default: 250");
@@ -55,8 +59,8 @@
 		exit(0);
 	}
 	
-	if ($stdin = read_STDIN())
-		$cmd['stdin'] = $stdin;
+	if (posix_isatty(STDIN))
+		$cmd['stdin'] = file_get_contents('php://stdin');
 	
 	# Scan proxies
 	if ((isset($cmd['p']) or isset($cmd['f']) or isset($cmd['stdin'])) and isset($cmd['t'])) {
@@ -111,6 +115,7 @@
 			echo "\n Current configuration:\n\n";
 			echo "   Your Public IP \t= {$cmd['public_ip']}\n";
 			echo "   Judge URL \t\t= $judge_url\n";
+			echo "   Proxy Type \t\t= $proxy_type\n";
 			echo "   Min.ProxyLevel \t= $min_level\n";
 			echo "   Timeout \t\t= $time_out seconds\n";
 			echo "   Input proxy \t\t= ".count($proxy_list)."\n";
