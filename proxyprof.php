@@ -55,6 +55,7 @@
 		exit(0);
 	}
 	
+	if (function_exists("posix_isatty"))
 	if (!posix_isatty(STDIN))
 		$cmd['stdin'] = file_get_contents('php://stdin');
 	
@@ -176,41 +177,53 @@
 				$proxy_ip_port = $instance->getOpt(CURLOPT_PROXY);
 				$proxy_id = ++$cmd['proxy_id'];
 				
-				# ------------
+				# ------------------------
 				# Bad proxy(s)
-				# ------------
+				# ------------------------
 				if ($instance->curlError or $instance->httpError) {
 					$status = 'Bad';
 					$cmd['info'] = 'Error: ' . $instance->errorCode . ', ' . $instance->errorMessage.'.';				
 					$cmd['bad_count']++;
 					
-				# -------------
+				# -------------------------
 				# Good proxy(s)
-				# -------------
+				# -------------------------
 				} else {
 					$status = 'Good';
-					$goods[] = $proxy_ip_port;
-					$cmd['good_count'] = count($goods);
 					$judge_headers = build_proxied_response_header($instance->rawResponse);											
 					$proxy_outbound_ip = $judge_headers['remote_addr'];				
 					$proxy_level = get_proxy_level($judge_headers, $public_ip);
 					
 					if ($proxy_level > $cmd['min_proxy_level'])
 						return;
-				
+					
 					$cmd['info'] = get_proxy_infrastructure($judge_headers, $proxy_ip_port, $public_ip);
-					$time = round($curl_info['total_time_us']/1000000, 1);
+					$time = round($curl_info['total_time_us']/1000000, 1);						
 					
-					# Blacklist test
-					if (isset($cmd['a']))
-						$blocking = blocking_test($proxy_ip_port, $cmd);
-					
-					# Save good proxy(s)
+					# Store good proxy(s)
 					global $cmd;
-					if ($cmd['o'] == 'STDOUT') {					
-						echo $proxy_ip_port.PHP_EOL;					
-					} else if (isset($cmd['o']) and $blocking == 'No') {					
-						file_put_contents($cmd['o'], $proxy_ip_port.PHP_EOL, FILE_APPEND);
+					if ($cmd['o'] == 'STDOUT') {
+						
+						echo $proxy_ip_port.PHP_EOL;
+						
+					} else if (isset($cmd['o'])) {
+						
+						if (isset($cmd['a'])) {
+							
+							if ($blocking = blocking_test($proxy_ip_port, $cmd) == 'No') 
+							{
+								global $cmd;
+								$goods[] = $proxy_ip_port;
+								$cmd['good_count'] = count($goods);
+							}							
+						} 
+						else 
+						{
+							global $cmd;
+							$goods[] = $proxy_ip_port;
+							$cmd['good_count'] = count($goods);
+							
+						}
 					}
 				}
 				
