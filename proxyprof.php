@@ -121,7 +121,7 @@
 			if (!isset($cmd['a']))
 			echo "   Min.ProxyLevel \t= $min_level\n";
 			echo "   Timeout \t\t= $time_out seconds\n";
-			echo "   Retry count \t= $max_retries\n";			
+			echo "   Retry count \t\t= $max_retries\n";			
 			echo "   Input proxy \t\t= ".count($proxy_list)."\n";
 			echo "   Thread count \t= $thread_count\n";
 		}
@@ -182,13 +182,6 @@
 				$proxy_ip_port = $instance->getOpt(CURLOPT_PROXY);
 				$proxy_id = ++$cmd['proxy_id'];
 				
-				/*
-				echo "curlError: ".$instance->curlError."\n";
-				echo "httpError: ".$instance->httpError."\n";
-				echo "error: ".$instance->error."\n";
-				echo "curlErrorCode: ".$instance->curlErrorCode."\n";
-				*/
-				
 				# --------------------------------
 				# Bad proxy(s), connection failure
 				# --------------------------------	
@@ -206,7 +199,6 @@
 				} else {
 					global $cmd;
 					
-					
 					// Judge mode
 					if (!isset($cmd['a'])) {
 						$judge_headers = build_proxied_response_header($instance->rawResponse);																
@@ -217,7 +209,10 @@
 							$cmd['info'] = 'Proxy security level is '.$proxy_level;
 							$status = 'Bad';
 						}
-						
+						$status = 'Good';
+						$goods[] = $proxy_ip_port;
+						$cmd['good_count'] = count($goods);
+							
 					// Approve mode
 					} else {
 						
@@ -245,8 +240,7 @@
 					
 					# Stdout good proxy(s)
 					if ($cmd['o'] == 'STDOUT') 						
-						echo $proxy_ip_port.PHP_EOL;
-					
+						echo $proxy_ip_port.PHP_EOL;					
 				}
 				
 				# Table: Scan results
