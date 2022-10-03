@@ -33,6 +33,7 @@
 	$opts['a:'] = array("-a <URL>", 		"\t\tBlocking test URL. Ex. cloudflare.com protected web service.");
 	$opts['j:'] = array("-j <URL>", 		"\t\tJudge URL. Default: random azenv.php");
 	$opts['y:'] = array("-y <num>", 		"\t\tMaximum retry count if connection failed. Default: 1");
+	$opts['m']  = array("", 				"\t\tDont merge output list into input list.");
 	$opts['s'] 	= array("-s", 				"\t\t\tSilent. No output.");	
 	$opts['g'] 	= array("-g", 				"\t\t\tList only good proxies.");
 	$opts['r'] 	= array("-r", 				"\t\t\tShow progress bar.");
@@ -62,7 +63,8 @@
 	# Scan proxies
 	if ((isset($cmd['p']) or isset($cmd['f']) or isset($cmd['stdin'])) and isset($cmd['t'])) {
 		check_proxies($cmd);
-	}
+	} else 
+		die("\nInput list doesnt provided. Try help (-h).\n");
 	
 	//****************************************************************
 
@@ -83,20 +85,22 @@
 		$proxy_type 	= strtoupper($cmd['t']);
 		$user_agent 	= 'Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1)';
 		$proxy_list		= build_proxy_list($cmd);
-		$judge_url		= get_judge_url($cmd);
+		$req_url		= !isset($cmd['a']) ? get_judge_url($cmd) : $cmd['a'];
+		$run_mode		= !isset($cmd['a']) ? 'Judge mode' : 'Blocking test';
 
 		$cmd['time_out'] = $time_out;
 		$cmd['bad_count'] = $cmd['good_count'] = 0;		
 		$cmd['public_ip'] = get_public_ip();
 		$cmd['min_proxy_level'] = $min_level;
 
-		# Merge output file to input list
+		# Merge output file into input proxy list
+		if (!isset($cmd['m']))
 		if (isset($cmd['f']) and isset($cmd['o']) and $cmd['o'] != 'STDOUT') {
 			if ($cmd['f'] != $cmd['o']) {
 				if (file_exists($cmd['o'])) {
 					$out_proxy_list = array_map('trim', 
 										explode("\n", 
-											trim(file_get_contents($cmd['o']))));
+											trim(file_get_contents($cmd['o']))));											
 					$proxy_list = array_merge($proxy_list, $out_proxy_list);
 					$proxy_list = array_unique($proxy_list);
 				}
@@ -111,10 +115,13 @@
 		if (!isset($cmd['s'])) {			
 			echo "\n Current configuration:\n\n";
 			echo "   Your Public IP \t= {$cmd['public_ip']}\n";
-			echo "   Judge URL \t\t= $judge_url\n";
+			echo "   Run mode \t\t= $run_mode\n";			
+			echo "   Request URL \t\t= $req_url\n";			
 			echo "   Proxy Type \t\t= $proxy_type\n";
+			if (!isset($cmd['a']))
 			echo "   Min.ProxyLevel \t= $min_level\n";
 			echo "   Timeout \t\t= $time_out seconds\n";
+			echo "   Retry count \t= $max_retries\n";			
 			echo "   Input proxy \t\t= ".count($proxy_list)."\n";
 			echo "   Thread count \t= $thread_count\n";
 		}
@@ -135,7 +142,6 @@
 			echo " ".str_repeat('~', 155)."\n";
 		}
 		
-		
 		# To reduce memory comsumption slice the list to chunks
 		$chunked_proxies = array_chunk($proxy_list, $thread_count);
 		foreach ($chunked_proxies as $proxies) {
@@ -143,7 +149,6 @@
 			# --------------
 			# Init MultiCurl
 			# --------------
-
 			$multi_curl = new MultiCurl();
 			$multi_curl->setUserAgent(random_user_agent());
 			$multi_curl->setConnectTimeout($time_out);
@@ -161,8 +166,8 @@
 			$multi_curl->setProxies($proxies); 		// Modified: Assign random proxies to every curl instances droped.
 			$proxy_count = count($proxies);
 			
-			for ($i=0; $i<$proxy_count; $i++)  	// Load judge URLs		
-				$multi_curl->addGet($judge_url);
+			for ($i=0; $i<$proxy_count; $i++)  		// Load judge URLs		
+				$multi_curl->addGet($req_url);
 					
 			# ---------------
 			# Define listener 
@@ -177,57 +182,75 @@
 				$proxy_ip_port = $instance->getOpt(CURLOPT_PROXY);
 				$proxy_id = ++$cmd['proxy_id'];
 				
-				# ------------------------
-				# Bad proxy(s)
-				# ------------------------
-				if ($instance->curlError or $instance->httpError) {
+				/*
+				echo "curlError: ".$instance->curlError."\n";
+				echo "httpError: ".$instance->httpError."\n";
+				echo "error: ".$instance->error."\n";
+				echo "curlErrorCode: ".$instance->curlErrorCode."\n";
+				*/
+				
+				# --------------------------------
+				# Bad proxy(s), connection failure
+				# --------------------------------	
+				if ($instance->curlError or $instance->curlErrorCode) {
 					$status = 'Bad';
-					$cmd['info'] = 'Error: ' . $instance->errorCode . ', ' . $instance->errorMessage.'.';				
+					$cmd['info'] = 'Error: ' . $instance->errorCode . ', ' . $instance->errorMessage.'.';									
 					$cmd['bad_count']++;
+					$cmd['time'] = round($curl_info['total_time_us']/1000000, 1);
+					$proxy_outbound_ip = '-';
+					$proxy_level = '-';
 					
 				# -------------------------
 				# Good proxy(s)
 				# -------------------------
 				} else {
-					$status = 'Good';
-					$judge_headers = build_proxied_response_header($instance->rawResponse);											
-					$proxy_outbound_ip = $judge_headers['remote_addr'];				
-					$proxy_level = get_proxy_level($judge_headers, $public_ip);
-					
-					if ($proxy_level > $cmd['min_proxy_level'])
-						return;
-					
-					$cmd['info'] = get_proxy_infrastructure($judge_headers, $proxy_ip_port, $public_ip);
-					$time = round($curl_info['total_time_us']/1000000, 1);						
-					
-					# Store good proxy(s)
 					global $cmd;
-					if ($cmd['o'] == 'STDOUT') {
+					
+					
+					// Judge mode
+					if (!isset($cmd['a'])) {
+						$judge_headers = build_proxied_response_header($instance->rawResponse);																
+						$proxy_outbound_ip = $judge_headers['remote_addr'];				
+						$proxy_level = get_proxy_level($judge_headers, $public_ip);
+						$cmd['info'] = get_proxy_infrastructure($judge_headers, $proxy_ip_port, $public_ip);						
+						if ($proxy_level > $cmd['min_proxy_level']) {
+							$cmd['info'] = 'Proxy security level is '.$proxy_level;
+							$status = 'Bad';
+						}
 						
-						echo $proxy_ip_port.PHP_EOL;
+					// Approve mode
+					} else {
 						
-					} else if (isset($cmd['o'])) {
+						$proxy_outbound_ip = '-';
+						$proxy_level = '-';
 						
-						if (isset($cmd['a'])) {
-							
-							if ($blocking = blocking_test($proxy_ip_port, $cmd) == 'No') 
-							{
-								global $cmd;
-								$goods[] = $proxy_ip_port;
-								$cmd['good_count'] = count($goods);
-							}							
-						} 
-						else 
-						{
-							global $cmd;
+						// Http connection blocked
+						if ($instance->httpError or $instance->error) {						
+							$proxy_outbound_ip = '-';
+							$proxy_level = '-';
+							$cmd['info'] = $instance->errorMessage;
+							$status = 'Bad';
+							$blocking = 'Yes';
+						} else {
+							// Good, connection approved							
 							$goods[] = $proxy_ip_port;
 							$cmd['good_count'] = count($goods);
-							
+							$cmd['info'] = 'Approved URL: '.$cmd['a'];
+							$status = 'Good';
+							$blocking = 'No';							
 						}
-					}
+					}					
+					
+					$cmd['time'] = round($curl_info['total_time_us']/1000000, 1);						
+					
+					# Stdout good proxy(s)
+					if ($cmd['o'] == 'STDOUT') 						
+						echo $proxy_ip_port.PHP_EOL;
+					
 				}
 				
 				# Table: Scan results
+				$time = $cmd['time'];
 				$mask = "%7.7s |%5.5s | %21.21s | %7.7s | %17.17s | %6.6s | %5.5s | %11.11s | %s \n";
 				if (!isset($cmd['s']) and !isset($cmd['r'])) # No silent, No progress
 					if (isset($cmd['g'])) { # Only goods
@@ -254,7 +277,7 @@
 		
 		global $goods;
 		
-		if (isset($cmd['o']))
+		if (isset($cmd['o']) and $cmd['o'] != 'STDOUT')
 			file_put_contents($cmd['o'], implode(PHP_EOL, $goods));
 		
 		if (!isset($cmd['s'])) {
@@ -298,27 +321,30 @@
 	function blocking_test($proxy, &$cmd) {
 		$proxy_type = $cmd['t'];
 		$test_url = $cmd['a'];
+				
+		$multi_curl = new MultiCurl();
+		$multi_curl->setUserAgent(random_user_agent());
+		$multi_curl->setConnectTimeout($cmd['time_out']);	
+		$multi_curl->setOpt(CURLOPT_TIMEOUT, $cmd['time_out']);			
+		$multi_curl->setOpt(CURLOPT_RETURNTRANSFER, 1);
+		$multi_curl->setOpt(CURLOPT_FOLLOWLOCATION, 1);
+		$multi_curl->setOpt(CURLOPT_MAXREDIRS, 5);
+		$multi_curl->setOpt(CURLOPT_SSL_VERIFYHOST, 0);
+		$multi_curl->setOpt(CURLOPT_SSL_VERIFYPEER, 0);
+		$multi_curl->setOpt(CURLOPT_SSL_VERIFYSTATUS, 0);		
+		$multi_curl->setProxyType(get_curl_proxy_type($cmd));		
+		$multi_curl->setProxy($proxy);
+		$multi_curl->setProxyTunnel();
+		$multi_curl->addGet($test_url);		
+		$multi_curl->start();
 		
-		$curl = new Curl();
-		$curl->setUserAgent(random_user_agent());
-		$curl->setConnectTimeout($cmd['time_out']);
-		$curl->setOpt(CURLOPT_TIMEOUT, $cmd['time_out']);			
-		$curl->setOpt(CURLOPT_RETURNTRANSFER, 1);
-		$curl->setOpt(CURLOPT_FOLLOWLOCATION, 1);
-		$curl->setOpt(CURLOPT_MAXREDIRS, 5);
-		$curl->setOpt(CURLOPT_SSL_VERIFYHOST, 0);
-		$curl->setOpt(CURLOPT_SSL_VERIFYPEER, 0);
-		$curl->setOpt(CURLOPT_SSL_VERIFYSTATUS, 0);		
-		$curl->setProxyType(get_curl_proxy_type($cmd));		
-		$curl->setProxy($proxy);
-		$curl->setProxyTunnel();
-		$curl->get($test_url);
-		
-		if ($curl->error or $curl->curlErrorCode) {			
-			$cmd['info'] = 'Error: ' . $curl->errorCode . ': ' . $curl->errorMessage;
+		if ($multi_curl->error or $multi_curl->curlErrorCode or $instance->curlError or $instance->httpError) 
+		{			
+			$cmd['info'] = 'Error: ' . $multi_curl->errorCode . ': ' . $multi_curl->errorMessage;
+			$multi_curl->close();
 			return 'Yes';
 		}
-		
+		$multi_curl->close();
 		return 'No';
 	}
 	
@@ -402,6 +428,9 @@
 	 * @return User Returns User object or null if not found
 	 */	
 	function get_judge_url($cmd) {
+				
+		if (isset($cmd['j']) and isset($cmd['a']))
+			die("j and a cannot be used together.\n");
 		
 		$judge_urls['http'][] = 'http://httpheader.net/azenv.php';
 		$judge_urls['http'][] = 'http://azenv.net';
