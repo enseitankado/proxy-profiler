@@ -33,10 +33,11 @@
 	$opts['a:'] = array("-a <URL>", 		"\t\tBlocking test URL. Ex. cloudflare.com protected web service.");
 	$opts['j:'] = array("-j <URL>", 		"\t\tJudge URL. Default: random azenv.php");
 	$opts['y:'] = array("-y <num>", 		"\t\tMaximum retry count if connection failed. Default: 1");
-	$opts['m']  = array("", 				"\t\tDont merge output list into input list.");
+	$opts['m']  = array("-m", 				"\t\t\tDont merge output list into input list.");
 	$opts['s'] 	= array("-s", 				"\t\t\tSilent. No output.");	
 	$opts['g'] 	= array("-g", 				"\t\t\tList only good proxies.");
 	$opts['r'] 	= array("-r", 				"\t\t\tShow progress bar.");
+	$opts['e'] 	= array("-e", 				"\t\t\tSys logging enabled.");
 		
 	$cmd = getopt(implode('', array_keys($opts)), array());	
 
@@ -57,8 +58,10 @@
 	}
 	
 	if (function_exists("posix_isatty"))
-	if (!posix_isatty(STDIN))
+	if (!posix_isatty(STDIN)) {
 		$cmd['stdin'] = file_get_contents('php://stdin');
+		$cmd['f'] = 'STDIN';
+	}
 	
 	# Scan proxies
 	if ((isset($cmd['p']) or isset($cmd['f']) or isset($cmd['stdin'])) and isset($cmd['t'])) {
@@ -84,14 +87,15 @@
 		$max_retries	= isset($cmd['y']) 		? $cmd['y'] : 1;
 		$proxy_type 	= strtoupper($cmd['t']);
 		$user_agent 	= 'Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1)';
-		$proxy_list		= build_proxy_list($cmd);
 		$req_url		= !isset($cmd['a']) ? get_judge_url($cmd) : $cmd['a'];
-		$run_mode		= !isset($cmd['a']) ? 'Judge mode' : 'Blocking test';
-
+		
+		$cmd['run_mode']= !isset($cmd['a']) ? 'Judge' : 'Ban test';
 		$cmd['time_out'] = $time_out;
 		$cmd['bad_count'] = $cmd['good_count'] = 0;		
 		$cmd['public_ip'] = get_public_ip();
 		$cmd['min_proxy_level'] = $min_level;
+		
+		$proxy_list		= build_proxy_list($cmd);
 
 		# Merge output file into input proxy list
 		if (!isset($cmd['m']))
@@ -103,9 +107,17 @@
 											trim(file_get_contents($cmd['o']))));											
 					$proxy_list = array_merge($proxy_list, $out_proxy_list);
 					$proxy_list = array_unique($proxy_list);
+					
+					# log
+					if (isset($cmd['e']))
+				syslog(LOG_LOCAL1|LOG_INFO, "PROXY-PROFILER ({$cmd['run_mode']} mode) ".strtoupper($cmd['t']).": ".count($out_proxy_list)." proxy merged into input proxy list from output file.");
 				}
 			}
 		}
+		
+		# log
+		if (isset($cmd['e']))
+			syslog(LOG_LOCAL1|LOG_INFO, "PROXY-PROFILER ({$cmd['run_mode']} mode) ".strtoupper($cmd['t']).": ".count($proxy_list)." proxy will be scanned.");
 		
 		# Dont display cosmetics
 		if ($cmd['o'] == 'STDOUT')
@@ -115,7 +127,7 @@
 		if (!isset($cmd['s'])) {			
 			echo "\n Current configuration:\n\n";
 			echo "   Your Public IP \t= {$cmd['public_ip']}\n";
-			echo "   Run mode \t\t= $run_mode\n";			
+			echo "   Run mode \t\t= {$cmd['run_mode']}\n";
 			echo "   Request URL \t\t= $req_url\n";			
 			echo "   Proxy Type \t\t= $proxy_type\n";
 			if (!isset($cmd['a']))
@@ -269,7 +281,8 @@
 		} // End chunked proxy list
 		
 		
-		global $goods;
+		global $goods, $start;
+		$completed_in = floor((microtime(true) - $start));
 		
 		if (isset($cmd['o']) and $cmd['o'] != 'STDOUT')
 			file_put_contents($cmd['o'], implode(PHP_EOL, $goods));
@@ -280,9 +293,13 @@
 			echo "   1: Elite proxy servers hide both your IP address and the fact that you are using a proxy server at all.\n";			
 			echo "   2: An anonymous proxy does not reveal your IP address but does reveal that you are using a proxy server.\n";
 			echo "   3: Transparent proxies do not hide your IP Address and they don’t alter any user information.\n\n";
-			global $start;
-			echo " Scan completed in ".floor((microtime(true) - $start))." seconds.\n\n";
+			
+			echo " Scan completed in ".$completed_in." seconds.\n\n";
 		}
+		
+		#log
+		if (isset($cmd['e']))
+			syslog(LOG_LOCAL1|LOG_INFO, "PROXY-PROFILER ({$cmd['run_mode']} mode) ".strtoupper($cmd['t']).": Scan completed in $completed_in secs and ".count($goods)." proxy(s) met the criterias.");
 	}
 
 	/**
@@ -502,7 +519,7 @@
 		} else if (isset($cmd['f'])) {
 				$fname = $cmd['f'];
 				if (file_exists($fname))
-				$proxy_list = array_map('trim', 
+					$proxy_list = array_map('trim', 
 									explode("\n", 
 										trim(file_get_contents($fname))));
 				else
@@ -513,6 +530,10 @@
 			
 		} else
 			die("\nNo proxy provided.\n");
+		
+		#log
+		if (isset($cmd['e']))
+			syslog(LOG_LOCAL1|LOG_INFO, "PROXY-PROFILER ({$cmd['run_mode']} mode) ".strtoupper($cmd['t']).": ".count($proxy_list)." proxy(s) were admited.");
 		
 		return $proxy_list;
 	}

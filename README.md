@@ -87,10 +87,7 @@ To install and enable the library run commands below:
  **-f \<file_name>**
   Input proxy file. Each line has an IP:PORT format. 
  
-
-> **Hint:** If input proxy file and output name is same and output file not empty then output list merged into input proxy file and will be
-> scanned alltogether again.
-
+> **Hint:** If input proxy file and output proxy file name is not same and output file is already exists then output file content merged into input proxy file and will be scanned alltogether again.
  
  **-o \<file_name/STDOUT>**
  Output proxy file or STDOUT ('STDOUT' is casesensitive).  Specifies the name of the file to save the scan results. Proxy servers that meet the scanning criteria are saved in this file. Proxy servers are registered in the same format (IP:PORT) as recorded in the input file (-f).
@@ -101,7 +98,7 @@ To install and enable the library run commands below:
 > of proxyprof is routed as input to another tool.
 
  **-l \<level>**
- Min proxy level output filter. The default value is 3. After establishing a TCP connection to the proxy, the security level is tried to be determined. To determine the security level, the script azenv.php is used, an example of which is also in this repository. Using the scanned proxy, a request is made to one of the internet copies of the script assigned as the judge and the HTTP headers reaching the target are scanned. The security levels of the Rated Proxies are listed below. The main difference that separates these three proxy types is the level of security and privacy they offer. 
+ Min proxy level output filter. The default value is 3. After establishing a TCP connection to the proxy, the security level is tried to be determined. To determine the security level, the script azenv.php is used, an example of which is also in this repository. Using the scanned proxy, a request is made to one of the internet copies of the script assigned as the judge and the HTTP headers reaching the target are scanned. The security levels of the Rated Proxies are listed below. The main difference that separates these three proxy types is the level of security and privacy they offer.
 
 > **Hint:** When proxyprof is used with the -g (good) option, only servers with the minimum security level specified by this parameter
 > are included in the result set.  
