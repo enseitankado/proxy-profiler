@@ -19,7 +19,7 @@
 	$start = microtime(true);
 	
 	# Check prequistics
-	check_prequistics();
+	check_dependencies();
 
 	# Command line options
 	$opts['h'] = array("-h", 				"\t\t\tShow this help.");
@@ -38,6 +38,7 @@
 	$opts['g'] 	= array("-g", 				"\t\t\tList only good proxies.");
 	$opts['r'] 	= array("-r", 				"\t\t\tShow progress bar.");
 	$opts['e'] 	= array("-e", 				"\t\t\tSys logging enabled.");
+	$opts['i'] 	= array("-i", 				"\t\t\tShow command history (Stored in tmp dir.).");
 		
 	$cmd = getopt(implode('', array_keys($opts)), array());	
 
@@ -56,7 +57,15 @@
 			echo "   3: Transparent proxies do not hide your IP Address and they don’t alter any user information.\n\n";	
 		exit(0);
 	}
+
+	# Show command history
+	if ((isset($cmd['i']))) {
+		$log_file = sys_get_temp_dir().DIRECTORY_SEPARATOR.pathinfo($argv[0])['filename'].'.log';
+		echo PHP_EOL."Listing content of ".$log_file.PHP_EOL.PHP_EOL;
+		die(file_get_contents($log_file, dirname(__FILE__).DIRECTORY_SEPARATOR.implode(' ', $argv).PHP_EOL, FILE_APPEND));
+	}	
 	
+	# Detect STDIN
 	if (function_exists("posix_isatty"))
 	if (!posix_isatty(STDIN)) {
 		$cmd['stdin'] = file_get_contents('php://stdin');
@@ -65,6 +74,8 @@
 	
 	# Scan proxies
 	if ((isset($cmd['p']) or isset($cmd['f']) or isset($cmd['stdin'])) and isset($cmd['t'])) {
+		$log_file = sys_get_temp_dir().DIRECTORY_SEPARATOR.pathinfo($argv[0])['filename'].'.log';
+		file_put_contents($log_file, dirname(__FILE__).DIRECTORY_SEPARATOR.implode(' ', $argv).PHP_EOL, FILE_APPEND);
 		check_proxies($cmd);
 	} else 
 		die("\nInput list doesnt provided. Try help (-h).\n");
@@ -110,7 +121,7 @@
 					
 					# log
 					if (isset($cmd['e']))
-				syslog(LOG_LOCAL1|LOG_INFO, "PROXY-PROFILER ({$cmd['run_mode']} mode) ".strtoupper($cmd['t']).": ".count($out_proxy_list)." proxy merged into input proxy list from output file.");
+						syslog(LOG_LOCAL1|LOG_INFO, "PROXY-PROFILER ({$cmd['run_mode']} mode) ".strtoupper($cmd['t']).": ".count($out_proxy_list)." proxy merged into input proxy list from output file.");
 				}
 			}
 		}
@@ -278,14 +289,13 @@
 					
 			$multi_curl->start();
 		
-		} // End chunked proxy list
-		
+		} // End chunked proxy list		
 		
 		global $goods, $start;
 		$completed_in = floor((microtime(true) - $start));
 		
 		if (isset($cmd['o']) and $cmd['o'] != 'STDOUT')
-			file_put_contents($cmd['o'], implode(PHP_EOL, $goods));
+			file_put_contents($cmd['o'], trim(implode(PHP_EOL, $goods)));
 		
 		if (!isset($cmd['s'])) {
 			echo "\n Total: ".count($goods)." good proxy(s) were detected that match the criteria(s).\n\n";
@@ -298,8 +308,10 @@
 		}
 		
 		#log
-		if (isset($cmd['e']))
+		if (isset($cmd['e'])) {
 			syslog(LOG_LOCAL1|LOG_INFO, "PROXY-PROFILER ({$cmd['run_mode']} mode) ".strtoupper($cmd['t']).": Scan completed in $completed_in secs and ".count($goods)." proxy(s) met the criterias.");
+			syslog(LOG_LOCAL1|LOG_INFO, "PROXY-PROFILER .");
+		}
 	}
 
 	/**
@@ -504,7 +516,7 @@
 			if (count($proxy_list) == 0)
 				die("\nEmpty STDIN.\n");
 		
-		# Check inline list
+		# Check inline input
 		} else if (isset($cmd['p'])) {
 			$p = $cmd['p'];
 			if (strpos($p, ','))
@@ -535,7 +547,7 @@
 		if (isset($cmd['e']))
 			syslog(LOG_LOCAL1|LOG_INFO, "PROXY-PROFILER ({$cmd['run_mode']} mode) ".strtoupper($cmd['t']).": ".count($proxy_list)." proxy(s) were admited.");
 		
-		return $proxy_list;
+		return array_unique($proxy_list);
 	}
 
 	/**
@@ -598,7 +610,7 @@
 	 *
 	 * @return No return.
 	 */	
-	function check_prequistics() {
+	function check_dependencies() {
 		
 		$d = false;
 		$v = phpversion();		
