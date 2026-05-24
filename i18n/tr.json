@@ -85,7 +85,7 @@
   "table.header.acc": "ERİŞİM",
 
   "table.status.ok": "iyi",
-  "table.status.filter": "süzgeç",
+  "table.status.filter": "elendi",
   "table.status.fail": "hata",
 
   "table.bucket.hot": "SICAK",
@@ -94,7 +94,7 @@
   "table.bucket.cold": "SOĞUK",
 
   "progress.format": "[{bar}] {pct:3.0f}%  {done:>{digits}}/{total}  iyi:{ok:<4}  hata:{fail:<4}  atlanan:{skip:<4}  süre:{elapsed:5.1f}s",
-  "progress.legend": " SEVİYE: L1=Elite · L2=Anonim · L2d=Anonim+Distorting · L3=Transparan   ·   — = veri yok (test çalışmadı veya judge dönmedi)",
+  "progress.legend": "  L1   Elite — IP ve proxy varlığı tamamen gizli; en yüksek anonimlik.\n  L2   Anonim — IP gizli ama Via/X-Forwarded-* header'ı proxy varlığını sızdırır.\n  L2d  Distorting — L2 + X-Forwarded-For'a SAHTE public IP enjekte eder (fingerprint kaçırma).\n  L3   Transparan — gerçek IP header'larda yansır; anonimlik yok, yalnız routing.\n  —    Veri yok: test çalışmadı ya da judge yanıt vermedi.",
   "progress.label_elapsed": "süre",
   "progress.label_ok": "iyi",
   "progress.label_fail": "hata",
