@@ -87,19 +87,42 @@ proxyprof <http|https|socks4|socks5> [seçenekler]
 
 ### Bayraklar
 
+`--help` çıktısı üç gruba ayrılır: **scan & probes**, **output filters**,
+**output destination**. Aşağıdaki tablo da bu sıraya göre düzenlenmiş.
+
+**scan & probes** (network davranışı, probe seçimi — ekstra istek maliyeti olabilir):
+
 | Uzun | Kısa | Varsayılan | Açıklama |
 |---|---|---|---|
 | `--file` | `-f` | stdin | Proxy listesi dosyası. `-` veya bayrak yok = stdin. |
-| `--output` | `-o` | — | Süzülmüş listeyi bu dosyaya yaz; stdout boş kalır. |
-| `--level` | `-l` | `1` | Kabul edilen maks. anonimlik seviyesi. `1`=elite, `2`=elite+anon, `3`=hepsi. |
 | `--concurrency` | `-c` | `500` | Eşzamanlı sonda sayısı. |
 | `--timeout` | `-T` | `5` | Proxy başına timeout (saniye). |
 | `--retries` | `-r` | `1` | Başarısız proxy başına tekrar deneme. |
 | `--judge` | `-j` | otomatik | Özel azenv.php-uyumlu judge URL'i. CF judge önerilir. Kimlik header'ı yalnız hardcoded güvenilir domain'lere gider — bkz. *Cloudflare-aware judge*. |
 | `--access-test [URLS]` | — | kapalı | Çoklu gatekeeper süzgeci. Değer verilmezse dahili CF-listesinden 3 rastgele site, virgüllü URL listesi verilirse o URL'ler kullanılır. |
-| `--tunnel-test` / `--no-tunnel-test` | — | **açık** | HTTP/HTTPS proxy'lerde CONNECT tünel testi. Default açık; `--no-tunnel-test` ile kapatılır. |
-| `--verbose` | `-v` | — | (Deprecated, no-op) Canlı tablo artık varsayılan. |
+| `--tunnel-test` / `--no-tunnel-test` | — | **açık** | HTTPS CONNECT testi. SOCKS için de probe tetikleyici (MITM testi probe'a bağlı). `--no-tunnel-test` HTTPS probe'unu tamamen kapatır (MITM testi de implicit olarak devre dışı). |
+| `--mitm-test` / `--no-mitm-test` | — | **açık** | MITM tespiti: TLS cert doğrulama başarısız olur ama CONNECT açıldıysa proxy MITM-suspected sayılır. Aynı HTTPS probe kullanılır — ek istek maliyeti yoktur. `--no-mitm-test` MITM filtresini kapatır (probe yine çalışırsa metrik raporlanır). |
+| `--reputation PATH` | — | `~/.config/proxyprof/state.db` | SQLite reputation DB. HOT/WARM/NEW/COLD bucket sınıflandırması + üstel probation için kullanılır. Detay: [Reputation & probation](#reputation--probation-düzenli-tarama). |
+| `--no-reputation` | — | — | Reputation'ı tamamen kapat — stateless. |
+| `--dead-threshold N` | — | `3` | COLD bucket'a girmek için gereken üst üste fail sayısı. |
+| `--probation-max-skip N` | — | `64` | COLD probation'ın atlama tavanı. En kötü ihtimalde her N run'da bir test edilir. |
+| `--cold-timeout SECONDS` | — | `2.0` | COLD bucket için per-proxy timeout. |
+
+**output filters** (post-scan, ek istek maliyeti yok — sadece çıktıyı süzer):
+
+| Uzun | Kısa | Varsayılan | Açıklama |
+|---|---|---|---|
+| `--level` | `-l` | `1` | Kabul edilen maks. anonimlik seviyesi. `1`=elite, `2`=elite+anon (distorting dahil), `3`=hepsi. |
+| `--country CC[,CC...]` | — | — | Yalnızca verilen ISO ülke kodlarındaki proxy'leri tut. CF judge gerekir (`PROXY_COUNTRY` döndürmesi için). Örn. `--country TR,US`. |
+| `--exclude-distorting` | — | kapalı | Sahte IP enjekte eden (distorting) proxy'leri çıkar. Default kapalı: distorting'ler `--level 2`'yi normal geçer. |
+
+**output destination** (çıktının nereye gideceği):
+
+| Uzun | Kısa | Varsayılan | Açıklama |
+|---|---|---|---|
+| `--output` | `-o` | stdout | Süzülmüş listeyi bu dosyaya yaz; stdout boş kalır. |
 | `--silent` | `-s` | — | Yalnız stdout (proxy listesi); tüm stderr susturulur. |
+| `--verbose` | `-v` | — | (Deprecated, no-op) Canlı tablo artık varsayılan. |
 
 ### Örnekler
 
@@ -121,6 +144,12 @@ proxyprof http -f raw.lst --access-test https://www.cloudflare.com,https://www.g
 
 # Tünel testini kapat (daha hızlı, daha az kaliteli sonuç)
 proxyprof http -f raw.lst --no-tunnel-test
+
+# Output filter'ları: yalnızca TR ve US elite, distorting yok
+proxyprof http -f raw.lst --country TR,US --exclude-distorting
+
+# MITM filtresini kapat (proxy MITM yapsa da kabul et — debug için)
+proxyprof http -f raw.lst --no-mitm-test
 
 # Kendi Cloudflare-korumalı judge'ınla: ülke bilgisi + ziyaret log'u
 proxyprof http -f raw.lst -j https://yours.tld/proxyjudge.php \
@@ -151,15 +180,19 @@ Sıralı, dedupe edilmiş, süzgeçten geçen `IP:PORT` satırları:
 Tarama akarken stderr şu yapıdadır:
 
 ```
-┌───────┬────────┬───────────────────────┬─────┬─────────────────┬────┬────────┬─────┬─────┐
-│     # │ STATUS │ PROXY                 │ LVL │ OUT             │ CC │   TIME │ TUN │ ACC │
-├───────┼────────┼───────────────────────┼─────┼─────────────────┼────┼────────┼─────┼─────┤
-│  3/30 │ ok     │ 8.211.194.85:4444     │ L1  │ 8.211.194.85    │ US │   1.2s │ ✓   │ ✓   │
-│  7/30 │ ok     │ 5.6.7.8:1080          │ L2d │ 5.6.7.8         │ DE │   0.8s │ ✓   │ ✓   │
-│ 12/30 │ filter │ 9.10.11.12:3128       │ L1  │ 9.10.11.12      │ —  │   2.1s │ ×   │ ✓   │
-└───────┴────────┴───────────────────────┴─────┴─────────────────┴────┴────────┴─────┴─────┘
-[████████████████░░░░]  80%  24/30  ok:3     fail:21    elapsed:  9.4s
+┌───────┬────────┬──────┬───────────────────────┬─────┬─────────────────┬────┬────────┬─────┬──────┬─────┐
+│     # │ STATUS │ BKT  │ PROXY                 │ LVL │ OUT             │ CC │   TIME │ TUN │ MITM │ ACC │
+├───────┼────────┼──────┼───────────────────────┼─────┼─────────────────┼────┼────────┼─────┼──────┼─────┤
+│  3/30 │ ok     │ H    │ 8.211.194.85:4444     │ L1  │ 8.211.194.85    │ US │   1.2s │ ✓   │ ✓    │ ✓   │
+│  7/30 │ ok     │ N    │ 5.6.7.8:1080          │ L2d │ 5.6.7.8         │ DE │   0.8s │ ✓   │ ✓    │ ✓   │
+│ 12/30 │ filter │ W    │ 9.10.11.12:3128       │ L1  │ 9.10.11.12      │ —  │   2.1s │ ✓   │ ×    │ ✓   │
+└───────┴────────┴──────┴───────────────────────┴─────┴─────────────────┴────┴────────┴─────┴──────┴─────┘
+[████████████████░░░░]  80%  24/30  ok:3     fail:21    skip:0     elapsed:  9.4s
 ```
+
+`MITM=×` üçüncü satırda: proxy CONNECT tüneli kurabildi (`TUN=✓`) ama TLS
+sertifika doğrulama başarısız oldu — proxy TLS chain'i kendi sertifikasıyla
+kırıyor, **MITM imzası**. STATUS `filter`'a düşer ve stdout'a yazılmaz.
 
 **Tablo davranışı:**
 
@@ -183,7 +216,8 @@ Tarama akarken stderr şu yapıdadır:
 | `OUT` | Judge'ın gördüğü çıkış IP'si (proxy'nin dış adresi) |
 | `CC` | ISO ülke kodu (CF judge kullanılırsa) |
 | `TIME` | Toplam test süresi |
-| `TUN` | Tunnel testi: `✓` geçti · `×` kaldı · `—` test yok |
+| `TUN` | Tunnel testi: `✓` CONNECT açıldı · `×` kapalı · `—` test yok |
+| `MITM` | TLS chain durumu: `✓` temiz · `×` MITM tespit edildi · `—` test yok |
 | `ACC` | Access testi: `✓` tüm gatekeeper'lara ulaştı · `×` en az biri fail · `—` test yok |
 
 **Tarama bittikten sonra** progress'in altında iki kutu sırayla yazılır.
@@ -418,6 +452,116 @@ verir: elite anonimlik (default `-l 1`) + HTTPS tüneli (default `--tunnel-test`
 
 ------------------------------------------------------------
 
+## Reputation & probation (düzenli tarama)
+
+Cron benzeri düzenli (saatlik/günlük) çalıştırmalarda input listesi tipik
+olarak **100k+ proxy** içerir, **%80–90'ı önceki çalıştırmalardan tanıdıktır**,
+ve büyük çoğunluğu **sürekli fail verir** (kaynak agregatörler aynı bayat
+listeyi günlerce sunar). Stateless modda her run baştan herkesi test eder —
+zamanın çoğu zaten ölü olduğunu bildiğin proxy'lere harcanır.
+
+Reputation katmanı bu israfı çözer. SQLite tabanlı bir state DB (`--reputation
+PATH`, default `~/.config/proxyprof/state.db`) her proxy'nin geçmişini tutar
+ve her tarama başında listeyi dört **bucket**'a ayırır:
+
+| Bucket | Tanım | Davranış |
+|---|---|---|
+| **HOT**  | Son 24 saatte başarılı | Önce dispatch edilir, normal `--timeout`. |
+| **WARM** | Geçmişte başarılı ama 24sa+ önce | İkinci sırada dispatch. |
+| **NEW**  | DB'de hiç görülmemiş | Üçüncü sırada. |
+| **COLD** | `--dead-threshold` (default 3) kez üst üste fail | En son, kısa `--cold-timeout` ve **üstel probation** ile. |
+
+### Ağırlıklı paralel dispatch
+
+Bucket'lar **sıralı değil ağırlıklı paralel** taranır. Tek bir
+`asyncio.Semaphore(--concurrency)` altında, dispatch sıralaması
+`HOT*8 → WARM*4 → NEW*2 → COLD*1 → HOT*8 → …` döngüsüyle interleave edilir.
+Sonuç: HOT proxy'ler ilk dalganın çoğunluğunu kapar (yani output erken akar),
+ama COLD'lar da paralel ilerler — tek bir bucket diğerlerini bloklamaz.
+
+### Üstel probation (asıl tasarruf)
+
+COLD bucket'taki bir proxy **her run'da değil**, üstel olarak seyrelen bir
+takvimle test edilir:
+
+| consecutive_failures | Test sıklığı |
+|---|---|
+| 3 (=dead_threshold) | 2 run'da bir |
+| 4                   | 4 run'da bir |
+| 5                   | 8 run'da bir |
+| 6                   | 16 run'da bir |
+| 7                   | 32 run'da bir |
+| 8+                  | **64 run'da bir** (tavan, `--probation-max-skip`) |
+
+Tavan, ölü proxy'nin tamamen unutulmasını engeller — bir gün geri gelirse
+yakalanır. Ama günlük cron'da bir proxy 8 kere üst üste fail vermişse,
+ortalama her **iki ayda bir** test edilir; %90'lık ölü kuyruk efektif olarak
+iş yükünden çıkar.
+
+Sadece **judge'a hiç ulaşamayan** (`status=fail`) sonuçlar bu sayacı artırır;
+`status=filter` (judge geçti ama tunnel/access süzgecinden düştü) proxy'nin
+canlı olduğunu gösterir — fail sayılmaz.
+
+### Tipik tasarruf
+
+Diyelim 100k proxy'lik input'unuz var ve günlük cron çalıştırıyorsunuz:
+
+| Run | Stateless | Reputation+probation | Açıklama |
+|---|---|---|---|
+| #1 (boş DB) | 100k test | 100k test | Hepsi NEW; aynı iş. |
+| #5 | 100k test | ~30k test | 70k ölü kuyruk farklı probation kademelerinde. |
+| #30 | 100k test | ~12k test | Eski ölüler 32–64 run'da bir test ediliyor. |
+| Steady state | 100k test | **~10–15k test** | HOT/WARM + yeni gelen NEW + COLD'un seyrek örnekleri. |
+
+### Canlı tabloda BUCKET sütunu
+
+Her satırın `BKT` sütunu proxy'nin bu run'daki bucket'ını gösterir: `H` (hot),
+`W` (warm), `N` (new), `C` (cold), `—` (stateless mod).
+
+### CONFIG kutusunda dağılım
+
+Tarama başında bucket dağılımı + atlanan probation sayısı raporlanır:
+
+```
+│ reputation   │ on  (run #42, db=/home/u/.config/proxyprof/state.db) │
+│ buckets      │ HOT 5,234 · WARM 3,128 · NEW 2,400 · COLD 89,238     │
+│ probation    │ 73,455 COLD proxy skipped                            │
+│ cold-timeout │ 2.0s                                                 │
+```
+
+### Tamamen kapatmak
+
+Eski stateless davranışı geri getirmek için:
+
+```bash
+proxyprof http -f raw.lst --no-reputation
+```
+
+State dosyası okunmaz/yazılmaz; tüm proxy'ler eşit önceliklendirilmemiş
+şekilde, tek `--timeout` ile taranır.
+
+### Bakım
+
+State şeması basit (tek `proxy` tablosu + `meta`). Dosya tamamen
+self-contained — kopyalayıp taşıyabilirsiniz. SQLite WAL modu açık
+olduğundan paralel proxyprof süreçleri aynı DB'ye güvenle yazar.
+
+Manuel inceleme:
+
+```bash
+sqlite3 ~/.config/proxyprof/state.db \
+  "SELECT proxy, consecutive_failures, total_attempts,
+          datetime(last_success,'unixepoch') AS last_ok
+   FROM proxy
+   ORDER BY consecutive_failures DESC
+   LIMIT 20;"
+```
+
+DB'yi resetlemek için: dosyayı sil. Bir sonraki çalıştırmada otomatik yeniden
+oluşturulur ve hepsi NEW'den başlar.
+
+------------------------------------------------------------
+
 ## Cloudflare-aware judge (önerilir)
 
 Public azenv judge'ları zaman zaman ölür ve yavaş yanıt verir. Kendi
@@ -552,8 +696,9 @@ jq 'select(.client_ip != null and .seen_ip != .client_ip)' < /var/log/proxyjudge
 
 ```
 proxy-profiler/
-├── proxyprof.py    # Async scanner + CLI (tek dosya, ~600 satır)
+├── proxyprof.py    # Async scanner + CLI (tek dosya, ~1000 satır)
 ├── judges.py       # Judge listesi + response parser + seviye + distorting + country
+├── reputation.py   # SQLite-tabanlı proxy reputation store + bucket sınıflandırma + probation
 ├── proxyjudge.php  # Opsiyonel CF-aware judge — kendi domain'inde host et
 ├── pyproject.toml  # aiohttp + aiohttp-socks bağımlılıkları
 └── README.md
@@ -562,9 +707,13 @@ proxy-profiler/
 - **`judges.py`** judge URL listesi, judge yanıtının iki olası formatını
   (`<pre>KEY=VALUE</pre>` ve düz JSON) ayrıştırır, public IP + header
   sözlüğünden seviye çıkarır.
+- **`reputation.py`** tek dosyalık SQLite şeması, bucket sınıflandırma
+  (HOT/WARM/NEW/COLD), üstel probation kararı ve ağırlıklı interleave dispatch
+  yardımcılarını sağlar. WAL modu açık → paralel proxyprof süreçleri güvenli.
 - **`proxyprof.py`** her proxy için tek bir `aiohttp_socks.ProxyConnector`
-  açar, `asyncio.Semaphore(N)` ile eşzamanlılığı sınırlar; sonuçlar tek bir
-  `gather` ile toplanır.
+  açar, `asyncio.Semaphore(N)` ile eşzamanlılığı sınırlar; reputation açıkken
+  task'lar bucket önceliğine göre interleave edilir; sonuçlar tek bir
+  `gather` ile toplanır ve sonunda DB'ye batch upsert ile yazılır.
 
 ------------------------------------------------------------
 

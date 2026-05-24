@@ -218,11 +218,31 @@ from judges import (  # noqa: E402
     remote_addr,
 )
 
+from reputation import (  # noqa: E402
+    BUCKET_COLD,
+    BUCKET_HOT,
+    BUCKET_NEW,
+    BUCKET_WARM,
+    BUCKETS,
+    DEFAULT_DEAD_THRESHOLD,
+    DEFAULT_PROBATION_MAX_SKIP,
+    DEFAULT_WEIGHTS,
+    Reputation,
+    classify,
+    default_db_path,
+    now_epoch,
+    should_test_now,
+    weighted_interleave,
+)
+
 
 DEFAULT_LEVEL = 1
 DEFAULT_CONCURRENCY = 500
-DEFAULT_TIMEOUT = 5.0
+DEFAULT_TIMEOUT = 3.0
 DEFAULT_RETRIES = 1
+# COLD bucket için kısa timeout: zaten %90+'ı timeout'a düşecek, beklemeye
+# gerek yok. HOT/WARM/NEW normal --timeout'u kullanır.
+DEFAULT_COLD_TIMEOUT = 2.0
 
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0"
@@ -308,6 +328,22 @@ class ScanResult:
     error: str | None = None    # ok=False ise hata özeti
     access_ok: bool | None = None    # -a verildiyse: tüm URL'lere ulaşıyor mu
     tunnel_ok: bool | None = None    # --tunnel-test: CONNECT testi geçti mi
+    mitm_suspected: bool | None = None  # --mitm-test: TLS chain kırık mı (MITM)
+    skipped: bool = False            # probe çalıştırılmadan kısayolla skip edildi
+    bucket: str | None = None        # reputation bucket (HOT/WARM/NEW/COLD/None)
+
+
+@dataclass
+class ScanTask:
+    """Tarama planının atomik birimi.
+
+    Reputation entegrasyonuyla birlikte her proxy'nin kendi `timeout`'u (COLD
+    bucket kısa, diğerleri normal) ve bir `bucket` etiketi (UI + sonuç
+    metaverisi) olabilir. --no-reputation modunda hepsi aynı timeout'la girer
+    ve bucket=None olur."""
+    proxy: str
+    timeout: float
+    bucket: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -441,22 +477,33 @@ async def probe(
                     proxy, proxy_type, access_urls, timeout,
                 )
 
-            # Tunnel test: SOCKS proxy'leri zaten tünel'er, sadece http/https
-            # proxy'lerde anlamlı.
+            # HTTPS probe: tek istek, iki sonuç (tunnel_ok + mitm_suspected).
+            # SOCKS proxy'leri zaten tünel'er → CONNECT testi gereksiz; ama MITM
+            # için yine HTTPS probe atmamız gerek (SOCKS proxy de MITM yapabilir).
             tunnel_ok: bool | None = None
+            mitm_suspected: bool | None = None
             if tunnel_test:
                 if protocol in ("socks4", "socks5"):
-                    tunnel_ok = True
-                else:
-                    tunnel_ok = await _tunnel_check(
+                    # SOCKS daima tünel'er, ama MITM olabilir → yine probe at,
+                    # tunnel_ok'u True olarak işaretle.
+                    probe_result = await _https_probe(
                         proxy, proxy_type, timeout,
                     )
+                    tunnel_ok = True
+                    mitm_suspected = probe_result.mitm_suspected
+                else:
+                    probe_result = await _https_probe(
+                        proxy, proxy_type, timeout,
+                    )
+                    tunnel_ok = probe_result.tunnel_ok
+                    mitm_suspected = probe_result.mitm_suspected
 
             return ScanResult(
                 proxy=proxy, ok=True, level=level, distorting=distorting,
                 outbound_ip=outbound, country=country,
                 elapsed=time.monotonic() - started,
                 access_ok=access_ok, tunnel_ok=tunnel_ok,
+                mitm_suspected=mitm_suspected,
             )
 
         # aiohttp_socks/python_socks kendi istisna hiyerarşisini fırlatır
@@ -498,11 +545,40 @@ async def _access_check(
     return True
 
 
-async def _tunnel_check(
+@dataclass
+class HttpsProbeResult:
+    """HTTPS CONNECT probe'unun iki ayrı sonucu.
+
+    Tek bir HTTPS isteği, iki ortogonal bilgi üretir:
+      - tunnel_ok:        proxy CONNECT tüneli kurabildi mi?
+      - mitm_suspected:   proxy TLS chain'i kendi sertifikasıyla kırıyor mu?
+
+    Olası kombinasyonlar:
+      tunnel_ok=True,  mitm_suspected=False → temiz HTTPS, TLS chain bozulmamış
+      tunnel_ok=True,  mitm_suspected=True  → CONNECT açıldı AMA cert doğrulama
+                                              fail etti = MITM imzası
+      tunnel_ok=False, mitm_suspected=False → CONNECT bile kurulmadı (refused,
+                                              timeout, network error)
+    """
+    tunnel_ok: bool
+    mitm_suspected: bool
+    error_class: str | None = None
+
+
+async def _https_probe(
     proxy: str, proxy_type: ProxyType, timeout: float,
-) -> bool:
-    """HTTPS CONNECT tüneli kurulabiliyor mu? HTTP proxy'nin CONNECT desteği
-    sınanır; başarı = TLS handshake + 204 yanıtı."""
+) -> HttpsProbeResult:
+    """Tek HTTPS request ile hem CONNECT-tunnel hem MITM testi.
+
+    Strateji:
+      - Default aiohttp davranışı TLS doğrulama AÇIK → MITM proxy'nin fake
+        sertifikası SSL cert hatasıyla yakalanır.
+      - Cert hatası → CONNECT tüneli açıldı (proxy yanıt verdi), TLS başarısız
+        (MITM). Yani: tunnel_ok=True, mitm_suspected=True.
+      - Diğer SSL hataları (protocol mismatch vs.) MITM imzası SAYILMAZ —
+        bunlar proxy'nin TLS implementasyon sorunları olabilir.
+      - Bağlantı/timeout hataları → tunnel_ok=False, mitm_suspected=False.
+    """
     host, _, port_str = proxy.partition(":")
     connector = ProxyConnector(
         proxy_type=proxy_type, host=host, port=int(port_str), rdns=True,
@@ -514,9 +590,24 @@ async def _tunnel_check(
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as session:
             async with session.get(TUNNEL_TEST_URL) as resp:
-                return resp.status == 204
-    except Exception:  # noqa: BLE001
-        return False
+                if resp.status == 204:
+                    return HttpsProbeResult(True, False)
+                return HttpsProbeResult(
+                    False, False, error_class=f"HTTP{resp.status}",
+                )
+    except aiohttp.ClientConnectorCertificateError:
+        # Sertifika doğrulama fail oldu: CONNECT açıldı (proxy 200 dönmüş)
+        # ama TLS chain proxy tarafından kırılıyor. MITM imzası.
+        return HttpsProbeResult(True, True, error_class="CertError")
+    except aiohttp.ClientSSLError as e:
+        msg = str(e).lower()
+        # aiohttp bazen CertVerificationError'ı ClientSSLError olarak
+        # sarmalıyor — mesaja bakarak ayırt et.
+        if "certificate_verify_failed" in msg or "cert" in msg:
+            return HttpsProbeResult(True, True, error_class="CertError")
+        return HttpsProbeResult(False, False, error_class="SSL")
+    except Exception as e:  # noqa: BLE001
+        return HttpsProbeResult(False, False, error_class=type(e).__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -548,13 +639,20 @@ class LiveTable:
     _FIXED: dict[str, int] = {
         "#":      5,
         "STATUS": 6,
+        "BKT":    4,   # H/W/N/C (reputation off ise "—")
         "PROXY":  21,
         "LVL":    3,
         "OUT":    15,
         "CC":     2,
         "TIME":   6,
         "TUN":    3,
+        "MITM":   4,   # ✓=temiz, ×=MITM tespit edildi, —=test yok
         "ACC":    3,
+    }
+
+    # Bucket isminin tek-karakter UI temsili. Sütun dar; özet bilgi yeterli.
+    _BUCKET_SHORT: dict[str, str] = {
+        BUCKET_HOT: "H", BUCKET_WARM: "W", BUCKET_NEW: "N", BUCKET_COLD: "C",
     }
 
     def __init__(self, enabled: bool, total: int, file=sys.stderr) -> None:
@@ -567,6 +665,7 @@ class LiveTable:
         self.count = 0
         self.ok_count = 0
         self.fail_count = 0
+        self.skip_count = 0
         self._headered = False
         self._progress_drawn = False
         self._cols = dict(self._FIXED)
@@ -610,6 +709,7 @@ class LiveTable:
             f"{self.count:>{digits}}/{self.total}  "
             f"ok:{self.ok_count:<4}  "
             f"fail:{self.fail_count:<4}  "
+            f"skip:{self.skip_count:<4}  "
             f"elapsed:{elapsed:5.1f}s"
         )
 
@@ -617,6 +717,10 @@ class LiveTable:
         self.count += 1
         if r.ok:
             self.ok_count += 1
+        elif r.skipped:
+            # IP-poison erken-atlama; sayım gerçek fail'lerden ayrı tutulur
+            # ki kullanıcı "kaç port'u test bile etmediğimi" görebilsin.
+            self.skip_count += 1
         else:
             self.fail_count += 1
 
@@ -633,8 +737,12 @@ class LiveTable:
         # Sadece OK satırlarını tabloya ekle. Fail'ler sayıma katıldı ama
         # tablo gürültüsünü artırmasın.
         if r.ok:
-            # STATUS sütunu: judge'ı geçti ama tunnel/access düştüyse "filter"
-            if (r.access_ok is False) or (r.tunnel_ok is False):
+            # STATUS: judge'ı geçti ama tunnel/access/mitm düştüyse "filter".
+            if (
+                (r.access_ok is False)
+                or (r.tunnel_ok is False)
+                or (r.mitm_suspected is True)
+            ):
                 status = "filter"
             else:
                 status = "ok"
@@ -652,15 +760,25 @@ class LiveTable:
                     return "—"
                 return "✓" if v else "×"
 
+            bkt = self._BUCKET_SHORT.get(r.bucket or "", "—")
+            # MITM kolonu: True = TLS chain kırık (kırmızı bayrak). Mantıken
+            # ters: ✓ = MITM YOK (güvenli), × = MITM şüphesi. _mark'a
+            # `not mitm_suspected` veriyoruz ki ✓ = iyi semantiği kalsın.
+            mitm_mark = (
+                "—" if r.mitm_suspected is None
+                else ("✓" if not r.mitm_suspected else "×")
+            )
             cells = [
                 f"{self.count}/{self.total}",
                 status,
+                bkt,
                 r.proxy,
                 lvl,
                 r.outbound_ip or "—",
                 r.country or "—",
                 f"{r.elapsed:.1f}s",
                 _mark(r.tunnel_ok),
+                mitm_mark,
                 _mark(r.access_ok),
             ]
             self.file.write(self._row(cells) + "\n")
@@ -739,6 +857,10 @@ def print_config_box(
     public_ip: str,
     access_urls: list[str],
     send_identity: bool,
+    reputation_enabled: bool = False,
+    run_index: int = 0,
+    bucket_groups: dict[str, list[str]] | None = None,
+    probation_skipped: int = 0,
     file=sys.stderr,
 ) -> None:
     """Taramanın TÜM ayarlarını key=value olarak göster.
@@ -757,13 +879,34 @@ def print_config_box(
         ("timeout",      f"{args.timeout}s"),
         ("retries",      str(args.retries)),
         ("tunnel-test",  "on" if args.tunnel_test else "off"),
+        ("mitm-test",    "on" if args.mitm_test else "off"),
     ]
     if access_urls:
         rows.append(("access-test", f"{len(access_urls)} URLs  ({', '.join(access_urls[:3])}"
                                     + ("..." if len(access_urls) > 3 else "") + ")"))
     else:
         rows.append(("access-test", "off"))
+    # Output filtreler — sadece set edilmişse göster (kapalı default'lar
+    # CONFIG kutusunu şişirmesin).
+    if getattr(args, "country", None):
+        rows.append(("country-filter", args.country))
+    if getattr(args, "exclude_distorting", False):
+        rows.append(("exclude-distorting", "on"))
     rows.append(("identity",  "on" if send_identity else "off"))
+    if reputation_enabled:
+        rows.append(("reputation", f"on  (run #{run_index}, db={args.reputation})"))
+        if bucket_groups is not None:
+            hot = len(bucket_groups.get(BUCKET_HOT, []))
+            warm = len(bucket_groups.get(BUCKET_WARM, []))
+            new = len(bucket_groups.get(BUCKET_NEW, []))
+            cold = len(bucket_groups.get(BUCKET_COLD, []))
+            rows.append(("buckets",
+                         f"HOT {hot:,} · WARM {warm:,} · NEW {new:,} · COLD {cold:,}"))
+        if probation_skipped:
+            rows.append(("probation", f"{probation_skipped:,} COLD proxy skipped"))
+        rows.append(("cold-timeout", f"{args.cold_timeout}s"))
+    else:
+        rows.append(("reputation", "off (stateless)"))
     _print_keyval_box("CONFIG", rows, file)
 
 
@@ -775,6 +918,7 @@ def print_result_box(
     output_path: str | None,
     elapsed: float,
     tunnel_test: bool,
+    mitm_test: bool = False,
     file=sys.stderr,
 ) -> None:
     """Tarama sonuçları — sayım, dağılım, hız, ülke, süre."""
@@ -782,9 +926,14 @@ def print_result_box(
     anon = counts.get(2, 0)
     trans = counts.get(3, 0)
     distorting = counts.get("distorting", 0)
+    mitm = counts.get("mitm", 0)
     bad = counts.get("bad", 0)
+    skipped = counts.get("skipped", 0)
     blocked = counts.get("blocked")
     tunneled = counts.get("tunneled")
+    mitm_filtered = counts.get("mitm_filtered", 0)
+    country_filtered = counts.get("country_filtered", 0)
+    distort_filtered = counts.get("distort_filtered", 0)
     dest = f"  →  {output_path}" if output_path else ""
 
     anon_text = f"{anon} anon"
@@ -796,11 +945,19 @@ def print_result_box(
         ("good",    f"{elite} elite, {anon_text}, {trans} transparent{dest}"),
         ("bad",     f"{bad} (timeout/error)"),
     ]
+    if skipped:
+        rows.append(("skipped", f"{skipped} (IP-poison early skip)"))
     if blocked is not None:
         rows.append(("blocked", f"{blocked} access denied"))
     if tunnel_test and tunneled is not None:
         good_total = elite + anon + trans
         rows.append(("tunnel",  f"{tunneled} CONNECT-capable (of {good_total} good)"))
+    if mitm_test and (mitm or mitm_filtered):
+        rows.append(("mitm",    f"{mitm} MITM-suspected · {mitm_filtered} dropped from output"))
+    if country_filtered:
+        rows.append(("country-drop", f"{country_filtered} not in --country list"))
+    if distort_filtered:
+        rows.append(("distort-drop", f"{distort_filtered} distorting (excluded)"))
     if timings:
         p50 = _percentile(timings, 50)
         p95 = _percentile(timings, 95)
@@ -820,34 +977,125 @@ def print_result_box(
 # Orchestration
 # ---------------------------------------------------------------------------
 
+_POISON_THRESHOLD = 3
+_POISONING_CLASSES = frozenset({"tls-intercept", "tls-junk", "timeout"})
+
+
+def _classify_error(err: str | None) -> str:
+    """Coarse classification for IP-poison tracking.
+
+    Returns a short label. Same class on many ports of one IP is strong
+    evidence the IP itself is bad (TLS intercept gateway, captive portal,
+    blackhole route), not each individual port — so we can skip the rest.
+    """
+    if not err:
+        return "other"
+    e = err.lower()
+    if "certificate_verify_failed" in e:
+        return "tls-intercept"     # MITM gateway terminating TLS with its own cert
+    if "wrong_version_number" in e or "unknown_protocol" in e:
+        return "tls-junk"          # plaintext bytes where TLS handshake expected
+    if "timeouterror" in e or "timed out" in e or "asyncio.timeouterror" in e:
+        return "timeout"           # firewalled / dropped / unreachable
+    if "connection refused" in e or "connectionreseterror" in e:
+        return "refused"
+    if "no route to host" in e or "network is unreachable" in e:
+        return "unreachable"
+    return "other"
+
+
+class IPPoison:
+    """Per-IP consecutive-failure tracker for short-circuit skipping.
+
+    After THRESHOLD consecutive failures of the SAME error class on one IP,
+    mark the IP as poisoned; subsequent ports of that IP return immediately
+    without probing. Only TLS-level and timeout classes poison — these are
+    IP-wide symptoms, not per-port. Per-port errors (refused, other) are
+    tracked but never trigger poisoning.
+
+    Async-safe under a single event loop: all mutations come from inside
+    worker coroutines; no lock needed.
+    """
+
+    def __init__(self, threshold: int = _POISON_THRESHOLD) -> None:
+        self.threshold = threshold
+        self._streak: dict[str, tuple[str, int]] = {}  # ip -> (class, count)
+        self._poisoned: dict[str, str] = {}            # ip -> reason label
+        self.skipped = 0
+
+    def reason(self, ip: str) -> str | None:
+        return self._poisoned.get(ip)
+
+    def record_failure(self, ip: str, error_class: str) -> None:
+        last = self._streak.get(ip)
+        if last and last[0] == error_class:
+            count = last[1] + 1
+        else:
+            count = 1
+        self._streak[ip] = (error_class, count)
+        if (
+            count >= self.threshold
+            and error_class in _POISONING_CLASSES
+            and ip not in self._poisoned
+        ):
+            self._poisoned[ip] = f"{error_class} x{count}"
+
+    def record_success(self, ip: str) -> None:
+        # A working port on this IP proves it's reachable; clear streak.
+        self._streak.pop(ip, None)
+
+
 async def scan(
-    proxies: list[str],
+    tasks: list[ScanTask],
     protocol: str,
     judge_url: str,
     public_ip: str,
     concurrency: int,
-    timeout: float,
     retries: int,
     access_urls: list[str],
     tunnel_test: bool,
     send_identity: bool,
     table: LiveTable | None,
 ) -> list[ScanResult]:
-    sem = asyncio.Semaphore(concurrency)
+    """Verilen ScanTask listesini async olarak tara.
 
-    async def worker(p: str) -> ScanResult:
+    Her task'ın kendi `timeout` ve `bucket` etiketi vardır. Çağıran taraf
+    task'ları zaten istenen dispatch order'da (weighted-interleaved) verir;
+    tek shared semafor + asyncio.gather doğal olarak ilk task'ları ilk
+    dispatch eder, böylece HOT bucket öncelik kazanır.
+    """
+    sem = asyncio.Semaphore(concurrency)
+    poison = IPPoison()
+
+    async def worker(t: ScanTask) -> ScanResult:
         async with sem:
-            r = await probe(
-                proxy=p, protocol=protocol, judge_url=judge_url,
-                timeout=timeout, retries=retries,
-                public_ip=public_ip, access_urls=access_urls,
-                tunnel_test=tunnel_test, send_identity=send_identity,
-            )
+            ip = t.proxy.partition(":")[0]
+            poisoned_reason = poison.reason(ip)
+            if poisoned_reason is not None:
+                poison.skipped += 1
+                r = ScanResult(
+                    proxy=t.proxy, ok=False, level=None, elapsed=0.0,
+                    error=f"skipped: IP poisoned ({poisoned_reason})",
+                    skipped=True,
+                    bucket=t.bucket,
+                )
+            else:
+                r = await probe(
+                    proxy=t.proxy, protocol=protocol, judge_url=judge_url,
+                    timeout=t.timeout, retries=retries,
+                    public_ip=public_ip, access_urls=access_urls,
+                    tunnel_test=tunnel_test, send_identity=send_identity,
+                )
+                r.bucket = t.bucket
+                if r.ok:
+                    poison.record_success(ip)
+                else:
+                    poison.record_failure(ip, _classify_error(r.error))
             if table is not None:
                 table.update(r)
             return r
 
-    return await asyncio.gather(*(worker(p) for p in proxies))
+    return await asyncio.gather(*(worker(t) for t in tasks))
 
 
 def _ip_port_sort_key(s: str) -> tuple[tuple[int, int, int, int], int]:
@@ -893,6 +1141,56 @@ async def amain(args: argparse.Namespace) -> int:
     proxies = read_proxies(args.file)
     access_urls = _resolve_access_test(args.access_test)
 
+    # ---- Reputation (opt-out via --no-reputation) ------------------------
+    #
+    # 100k+ proxy'lik düzenli taramalarda input'un %80–90'ı önceki run'lardan
+    # tanıdık ve sürekli fail. SQLite-tabanlı bir state DB ile her proxy'nin
+    # geçmişini tutuyoruz; tarama başında HOT/WARM/NEW/COLD bucket'larına
+    # ayırıyoruz; COLD bucket'a üstel probation uyguluyoruz (her run değil,
+    # her 2^k run'da bir test). Bu sayede ölü kuyruk iş yükünden çıkar.
+    reputation: Reputation | None = None
+    bucket_records: dict[str, object] = {}      # proxy → Record (or absent)
+    bucket_map: dict[str, str] = {}             # proxy → bucket name
+    run_index = 0
+    probation_skipped: list[str] = []           # this run'da test bile edilmedi
+    if not args.no_reputation:
+        reputation = Reputation(Path(args.reputation))
+        run_index = reputation.increment_run_index()
+        bucket_records = reputation.get_records(proxies)
+        reputation.mark_seen(proxies, now_epoch())
+        now = now_epoch()
+        for p in proxies:
+            rec = bucket_records.get(p)
+            bucket = classify(rec, now, args.dead_threshold)
+            bucket_map[p] = bucket
+            if not should_test_now(
+                rec, bucket, run_index,
+                args.dead_threshold, args.probation_max_skip,
+            ):
+                probation_skipped.append(p)
+
+    # Bucket gruplarını oluştur (probation'dan geçemeyenler hariç).
+    if reputation is not None:
+        skip_set = set(probation_skipped)
+        bucket_groups: dict[str, list[str]] = {
+            BUCKET_HOT: [], BUCKET_WARM: [], BUCKET_NEW: [], BUCKET_COLD: [],
+        }
+        for p in proxies:
+            if p in skip_set:
+                continue
+            bucket_groups[bucket_map[p]].append(p)
+        ordered_proxies = weighted_interleave(bucket_groups, DEFAULT_WEIGHTS)
+    else:
+        ordered_proxies = list(proxies)
+
+    # ScanTask listesini kur — COLD bucket için kısa timeout, diğerleri için
+    # kullanıcı timeout'u. Reputation kapalıysa hepsine kullanıcı timeout'u.
+    tasks: list[ScanTask] = []
+    for p in ordered_proxies:
+        b = bucket_map.get(p) if reputation is not None else None
+        t = args.cold_timeout if b == BUCKET_COLD else args.timeout
+        tasks.append(ScanTask(proxy=p, timeout=t, bucket=b))
+
     # Tek bir proxysiz HTTP session ile public IP + judge tespit. Proxy başına
     # ayrı connector açacağımız için bu session sadece bootstrap içindir.
     # Bootstrap timeout proxy-başına timeout'tan ayrı tutulur — kullanıcı agresif
@@ -913,21 +1211,39 @@ async def amain(args: argparse.Namespace) -> int:
                 )
             except JudgeUnavailable as e:
                 print(f"proxyprof: {e}", file=sys.stderr)
+                if reputation is not None:
+                    reputation.close()
                 return 1
 
     send_identity = _judge_accepts_proxyprof_header(judge_url)
 
-    # Üst başlık satırı YOK — tüm parametre özetlemesi sondaki CONFIG kutusunda.
-    table = LiveTable(enabled=not args.silent, total=len(proxies))
+    # CONFIG kutusu taramanın BAŞINDA basılır — progress satırı altında akar,
+    # OK satırları sonra eklenir. Kullanıcı tarama bittiğinde tekrar görmesin
+    # diye sonda yeniden basılmaz. silent modda hiç basılmaz.
+    if not args.silent:
+        print_config_box(
+            args=args,
+            judge_url=judge_url,
+            public_ip=public_ip,
+            access_urls=access_urls,
+            send_identity=send_identity,
+            reputation_enabled=reputation is not None,
+            run_index=run_index,
+            bucket_groups=(bucket_groups if reputation is not None else None),
+            probation_skipped=len(probation_skipped),
+        )
+
+    # LiveTable total = aslında test edilecek proxy sayısı (probation skipped'lar
+    # hariç). Probation skipped'lar tabloda görünmez ama özet kutuda raporlanır.
+    table = LiveTable(enabled=not args.silent, total=len(tasks))
 
     started = time.monotonic()
     results = await scan(
-        proxies=proxies,
+        tasks=tasks,
         protocol=args.protocol,
         judge_url=judge_url,
         public_ip=public_ip,
         concurrency=args.concurrency,
-        timeout=args.timeout,
         retries=args.retries,
         access_urls=access_urls,
         tunnel_test=args.tunnel_test,
@@ -937,34 +1253,60 @@ async def amain(args: argparse.Namespace) -> int:
     table.finish()
     elapsed = time.monotonic() - started
 
+    # Reputation'ı güncelle — IP-poison ile pre-skipped olanlar (r.skipped=True
+    # AND r.bucket reputation'dan geliyor) DB'ye değişiklik yapmamalı; onlar
+    # için consecutive_failures artırılmamalı çünkü gerçek probe çalışmadı.
+    if reputation is not None:
+        real_results = [r for r in results if not r.skipped]
+        reputation.record_results(real_results, run_index, now_epoch())
+        reputation.close()
+
     # Sayım: counts[1..3] iyi proxy seviye dağılımı (filtre öncesi gerçek).
-    # distorting, blocked, tunneled iyi proxy alt türleri. timings sadece
-    # ok proxy'leri içerir (percentile için).
+    # distorting, blocked, tunneled, mitm_blocked, country_filtered, distort_filtered
+    # iyi proxy alt türleri. timings sadece ok proxy'leri içerir (percentile için).
     counts = {1: 0, 2: 0, 3: 0,
-              "bad": 0, "blocked": 0, "distorting": 0, "tunneled": 0}
+              "bad": 0, "skipped": 0, "blocked": 0,
+              "distorting": 0, "tunneled": 0, "mitm": 0,
+              "mitm_filtered": 0, "country_filtered": 0,
+              "distort_filtered": 0}
     timings: list[float] = []
     countries: Counter = Counter()
     kept: list[str] = []
+    country_filter = {c.strip().upper() for c in (args.country or "").split(",") if c.strip()}
     for r in results:
         if not r.ok:
-            counts["bad"] += 1
+            if r.skipped:
+                counts["skipped"] += 1
+            else:
+                counts["bad"] += 1
             continue
         counts[r.level] += 1
         if r.distorting:
             counts["distorting"] += 1
         if r.tunnel_ok is True:
             counts["tunneled"] += 1
+        if r.mitm_suspected is True:
+            counts["mitm"] += 1
         timings.append(r.elapsed)
         if r.country:
             countries[r.country] += 1
 
-        # Filtre: -l seviye, -a tüm URL'lere erişim, --tunnel-test ise tunnel.
+        # Filter zinciri — her atlamayı kategori olarak say.
         if r.level > args.level:
             continue
         if access_urls and not r.access_ok:
             counts["blocked"] += 1
             continue
         if args.tunnel_test and r.tunnel_ok is False:
+            continue
+        if args.mitm_test and r.mitm_suspected is True:
+            counts["mitm_filtered"] += 1
+            continue
+        if args.exclude_distorting and r.distorting:
+            counts["distort_filtered"] += 1
+            continue
+        if country_filter and (r.country or "").upper() not in country_filter:
+            counts["country_filtered"] += 1
             continue
         kept.append(r.proxy)
 
@@ -992,13 +1334,7 @@ async def amain(args: argparse.Namespace) -> int:
             summary_counts.pop("blocked", None)
         if not args.tunnel_test:
             summary_counts.pop("tunneled", None)
-        print_config_box(
-            args=args,
-            judge_url=judge_url,
-            public_ip=public_ip,
-            access_urls=access_urls,
-            send_identity=send_identity,
-        )
+        # CONFIG taramanın başında basıldı; sonda tekrar gösterilmez.
         print_result_box(
             scanned=len(results),
             counts=summary_counts,
@@ -1007,6 +1343,7 @@ async def amain(args: argparse.Namespace) -> int:
             output_path=args.output,
             elapsed=elapsed,
             tunnel_test=args.tunnel_test,
+            mitm_test=args.mitm_test,
         )
 
     return 0
@@ -1049,38 +1386,33 @@ def main(argv: list[str] | None = None) -> int:
         choices=("http", "https", "socks4", "socks5"),
         help="Proxy protocol of every entry in the input list.",
     )
-    p.add_argument(
+
+    # --- scan & probes --------------------------------------------------
+    g_scan = p.add_argument_group(
+        "scan & probes",
+        "Network behaviour: concurrency, timeouts, and which probes are sent "
+        "per proxy. Probes cost extra requests; flags here affect duration.",
+    )
+    g_scan.add_argument(
         "-f", "--file", metavar="FILE",
         help="Proxy list file (default: stdin if piped). Use '-' for stdin.",
     )
-    p.add_argument(
-        "-o", "--output", metavar="FILE",
-        help="Write good proxies to FILE; stdout stays empty.",
-    )
-    p.add_argument(
-        "-l", "--level", type=int, choices=(1, 2, 3),
-        default=DEFAULT_LEVEL,
-        help=(
-            "Maximum anonymity level kept (1=elite only, 2=elite+anon, "
-            f"3=all). Default: {DEFAULT_LEVEL}."
-        ),
-    )
-    p.add_argument(
+    g_scan.add_argument(
         "-c", "--concurrency", type=int, default=DEFAULT_CONCURRENCY,
         metavar="N",
         help=f"Concurrent probes (default: {DEFAULT_CONCURRENCY}).",
     )
-    p.add_argument(
+    g_scan.add_argument(
         "-T", "--timeout", type=float, default=DEFAULT_TIMEOUT,
         metavar="SECONDS",
         help=f"Per-proxy timeout (default: {DEFAULT_TIMEOUT}).",
     )
-    p.add_argument(
+    g_scan.add_argument(
         "-r", "--retries", type=int, default=DEFAULT_RETRIES,
         metavar="N",
         help=f"Retries per proxy on failure (default: {DEFAULT_RETRIES}).",
     )
-    p.add_argument(
+    g_scan.add_argument(
         "-j", "--judge", metavar="URL",
         help=(
             "Custom judge URL (azenv.php-compatible). The identity header "
@@ -1088,7 +1420,7 @@ def main(argv: list[str] | None = None) -> int:
             f"trusted domains: {', '.join(_TRUSTED_JUDGE_DOMAINS)}."
         ),
     )
-    p.add_argument(
+    g_scan.add_argument(
         "--access-test", nargs="?", const=ACCESS_AUTO_SENTINEL,
         default=None, metavar="URLS",
         help=(
@@ -1100,21 +1432,120 @@ def main(argv: list[str] | None = None) -> int:
             "Disabled by default."
         ),
     )
-    p.add_argument(
+    g_scan.add_argument(
         "--tunnel-test", action=argparse.BooleanOptionalAction, default=True,
         dest="tunnel_test",
         help=(
-            "For http/https proxies, verify HTTPS CONNECT tunneling works "
-            f"({TUNNEL_TEST_URL} must return 204). SOCKS proxies are "
-            "skipped (always tunnel). Enabled by default; "
-            "use --no-tunnel-test to skip and roughly halve request count."
+            "Verify HTTPS CONNECT tunneling via "
+            f"{TUNNEL_TEST_URL}. For http/https proxies probes CONNECT "
+            "support; for SOCKS proxies (which always tunnel) is used to "
+            "trigger the MITM probe. Enabled by default; use "
+            "--no-tunnel-test to skip the HTTPS probe entirely (also "
+            "disables MITM detection)."
         ),
     )
-    p.add_argument(
+    g_scan.add_argument(
+        "--mitm-test", action=argparse.BooleanOptionalAction, default=True,
+        dest="mitm_test",
+        help=(
+            "Detect proxies that intercept TLS (MITM). The HTTPS probe runs "
+            "with strict cert verification — proxies whose response fails "
+            "cert validation but successfully opened the CONNECT tunnel are "
+            "flagged as MITM-suspected and excluded from output. Requires "
+            "--tunnel-test (the same probe yields both signals); "
+            "--no-tunnel-test implicitly disables this too."
+        ),
+    )
+    g_scan.add_argument(
+        "--reputation", metavar="PATH", default=str(default_db_path()),
+        help=(
+            "SQLite reputation DB path. Tracks each proxy's history across "
+            "runs so HOT (recently-good) proxies are tested first and COLD "
+            "(repeatedly-failed) proxies enter exponential probation "
+            "(skipped 2^k runs after k consecutive failures, capped). "
+            f"Default: {default_db_path()}"
+        ),
+    )
+    g_scan.add_argument(
+        "--no-reputation", action="store_true",
+        help=(
+            "Disable the reputation store entirely. Tarama tamamen stateless "
+            "olur — eski (pre-2.1) davranış. Listeden hiçbir proxy önceliklendirilmez."
+        ),
+    )
+    g_scan.add_argument(
+        "--dead-threshold", type=int, default=DEFAULT_DEAD_THRESHOLD,
+        metavar="N",
+        help=(
+            f"Consecutive fail count after which a proxy enters COLD bucket "
+            f"and starts exponential probation (default: {DEFAULT_DEAD_THRESHOLD})."
+        ),
+    )
+    g_scan.add_argument(
+        "--probation-max-skip", type=int, default=DEFAULT_PROBATION_MAX_SKIP,
+        metavar="N",
+        help=(
+            "Maximum skip factor for COLD probation (default: "
+            f"{DEFAULT_PROBATION_MAX_SKIP}). At max, a dead proxy is re-tested "
+            "every N runs — never fully forgotten."
+        ),
+    )
+    g_scan.add_argument(
+        "--cold-timeout", type=float, default=DEFAULT_COLD_TIMEOUT,
+        metavar="SECONDS",
+        help=(
+            "Per-proxy timeout used ONLY for COLD bucket probes (default: "
+            f"{DEFAULT_COLD_TIMEOUT}). Shorter than --timeout because most "
+            "cold proxies will time out anyway; saves wall-clock time."
+        ),
+    )
+
+    # --- output filters -------------------------------------------------
+    g_filter = p.add_argument_group(
+        "output filters",
+        "Post-scan filters: which good proxies make it into the final list. "
+        "No extra network cost; they just gate the output.",
+    )
+    g_filter.add_argument(
+        "-l", "--level", type=int, choices=(1, 2, 3),
+        default=DEFAULT_LEVEL,
+        help=(
+            "Maximum anonymity level kept (1=elite only, 2=elite+anon, "
+            f"3=all). Default: {DEFAULT_LEVEL}."
+        ),
+    )
+    g_filter.add_argument(
+        "--country", metavar="CC[,CC...]", default=None,
+        help=(
+            "Keep only proxies from these ISO-3166-1 alpha-2 country codes "
+            "(e.g. --country TR or --country TR,US,DE). Requires a CF-aware "
+            "judge that returns PROXY_COUNTRY; public azenv judges don't "
+            "supply country, so this filter drops all proxies in that case."
+        ),
+    )
+    g_filter.add_argument(
+        "--exclude-distorting", action="store_true",
+        help=(
+            "Drop distorting proxies (anonymous proxies that inject a FAKE "
+            "public IP into X-Forwarded-For). Off by default — distorting "
+            "proxies count as Level 2 and pass --level filter normally."
+        ),
+    )
+
+    # --- output destination --------------------------------------------
+    g_out = p.add_argument_group(
+        "output destination",
+        "Where the filtered proxy list goes; how loud stderr is.",
+    )
+    g_out.add_argument(
+        "-o", "--output", metavar="FILE",
+        help="Write good proxies to FILE; stdout stays empty.",
+    )
+    g_out.add_argument(
         "-v", "--verbose", action="store_true",
         help="Deprecated, no-op (the live table is now the default).",
     )
-    p.add_argument(
+    g_out.add_argument(
         "-s", "--silent", action="store_true",
         help="Only print the proxy list to stdout; suppress all stderr.",
     )
