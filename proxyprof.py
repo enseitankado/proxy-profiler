@@ -356,7 +356,14 @@ async def probe(
                 headers={"User-Agent": USER_AGENT},
                 timeout=aiohttp.ClientTimeout(total=timeout),
             ) as session:
-                async with session.get(judge_url) as resp:
+                # X-Proxyprof-Proxy: judge'a "ben bu protokolden, bu IP:PORT'tan
+                # geliyorum" der. Judge bunu CF-Connecting-IP ile birlikte log'a
+                # yazabilir; bilmeyen judge'lar (public azenv'lar) header'ı
+                # sessizce yok sayar.
+                async with session.get(
+                    judge_url,
+                    headers={"X-Proxyprof-Proxy": f"{protocol}://{proxy}"},
+                ) as resp:
                     body = await resp.text(errors="replace")
 
             elapsed = time.monotonic() - started

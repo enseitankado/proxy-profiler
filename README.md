@@ -362,6 +362,74 @@ Bu judge:
 > "DNS only" (gri bulut) modunda CF header'ları gelmez, judge sıradan bir
 > azenv gibi çalışır (country bilgisi yok).
 
+### Ziyaret log'u (opt-in)
+
+Judge gelen her isteği JSONL formatında yan tarafa kaydedebilir. Default olarak
+**kapalı**. Açmak için `proxyjudge.php`'nin tepesindeki tek satırı düzenle:
+
+```php
+// Boş = log yok. Path verirsen log açılır.
+$LOG_FILE = '/var/log/proxyjudge.log';
+```
+
+> ⚠️ **Güvenlik:** Log dosyasını **web root içine koyma**. Path'i ya tamamen
+> dışarı (örn. `/var/log/...`) yaz, ya da web root içinde tutuyorsan
+> `.htaccess`/nginx kuralıyla HTTP erişimini engelle. Aksi takdirde judge'ını
+> ziyaret eden tüm proxy'lerin listesi internete açık olur.
+
+Her satır şu alanları içerir:
+
+| Alan | Kaynak | Açıklama |
+|---|---|---|
+| `ts` | Server | ISO-8601 UTC timestamp |
+| `seen_ip` | CF-Connecting-IP | Proxy'nin gerçek çıkış IP'si (güvenilir — CF set eder) |
+| `seen_port` | TCP peer | Proxy'nin O istek için kullandığı **ephemeral** kaynak port (dinleme portu DEĞİL) |
+| `country` | CF-IPCountry | ISO ülke kodu (`TR`, `US`, …) |
+| `client_type` | `X-Proxyprof-Proxy` header | Proxy tipi (`http` / `https` / `socks4` / `socks5`) — **spoof edilebilir** |
+| `client_ip` | `X-Proxyprof-Proxy` header | Proxy'nin **dinleme** IP'si — `seen_ip` ile cross-reference yapılabilir |
+| `client_port` | `X-Proxyprof-Proxy` header | Proxy'nin **dinleme** portu (örn. `1080`, `8080`) |
+| `ua` | User-Agent | 200 karakterle kısaltılmış |
+| `cf_ray` | CF-Ray | CF edge trace ID — sorun ayıklama için |
+
+Tipik bir satır:
+
+```json
+{"ts":"2026-05-24T13:47:21+00:00","seen_ip":"45.83.122.10","seen_port":54231,"country":"TR","client_type":"socks5","client_ip":"45.83.122.10","client_port":1080,"ua":"Mozilla/5.0 ...","cf_ray":"8a1b2c3d4e5f6789-IST"}
+```
+
+**Neden iki ayrı IP alanı?** `seen_ip` Cloudflare'in TCP peer olarak gördüğü
+adres — proxy bunu sahteleyemez. `client_ip` ise proxyprof'un header'a yazdığı
+değer — herkes bu header'ı uydurabilir. İkisinin **farklı** olması ya proxy
+chain'i (proxyprof → proxy A → proxy B → judge) ya da fake-header trafiği
+demek. **Aynı** olması = direkt bağlantı, güvenilir kayıt.
+
+#### proxyprof tarafı
+
+`proxyprof` her judge isteğinde otomatik olarak şu header'ı ekler:
+
+```
+X-Proxyprof-Proxy: socks5://1.2.3.4:1080
+```
+
+Public azenv'lar bu header'ı yok sayar (zararsız); senin `proxyjudge.php`'in
+ise yakalayıp log'a yazar. Ek bayrak gerekmez.
+
+#### Log'u okuma
+
+```bash
+# Son 10 girişi göster
+tail -n 10 /var/log/proxyjudge.log
+
+# Sadece SOCKS5 ziyaretçilerinin IP'lerini çıkar
+jq -r 'select(.client_type=="socks5") | .seen_ip' < /var/log/proxyjudge.log
+
+# Ülke dağılımı
+jq -r '.country' < /var/log/proxyjudge.log | sort | uniq -c | sort -rn | head
+
+# seen_ip ile client_ip'in farklı olduğu (chain veya spoof) girişler
+jq 'select(.client_ip != null and .seen_ip != .client_ip)' < /var/log/proxyjudge.log
+```
+
 ------------------------------------------------------------
 
 ## Mimari

@@ -28,7 +28,31 @@
  *
  * Note: requires CF "orange cloud" mode (proxied). DNS-only mode (gray cloud)
  * won't add the CF-* headers and you'll get a vanilla judge response.
+ *
+ * ----------------------------------------------------------------------------
+ * Optional: visit logging
+ * ----------------------------------------------------------------------------
+ * Set $LOG_FILE below to a writable path to enable per-visit JSONL logging.
+ * proxy-profiler sends an `X-Proxyprof-Proxy: <type>://<ip>:<port>` header so
+ * the log can capture the visiting proxy's claimed protocol/listen address
+ * (which the judge otherwise cannot see — it only sees the ephemeral source
+ * port of the outbound TCP connection).
+ *
+ *  - "seen_*"   = fields derived from CF / TCP layer (trusted, not spoofable
+ *                 unless CF is bypassed)
+ *  - "client_*" = fields parsed from X-Proxyprof-Proxy (spoofable by anyone
+ *                 hitting the URL; cross-reference seen_ip if it matters)
+ *
+ * SECURITY: do NOT use a path inside your web root unless you also block HTTP
+ * access (e.g. with .htaccess "Deny from all"). Anyone could otherwise
+ * download a log of which proxies your judge has seen.
  */
+
+// === Visit logging configuration ===
+// Empty string = disabled. Examples:
+//   $LOG_FILE = '/var/log/proxyjudge.log';
+//   $LOG_FILE = __DIR__ . '/../proxyjudge.log';   // one level above web root
+$LOG_FILE = '';
 
 header('Content-Type: text/html; charset=utf-8');
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
@@ -59,6 +83,31 @@ $cf_ray      = $req_headers['CF-Ray']           ?? $_SERVER['HTTP_CF_RAY']      
 $cf_proto    = $req_headers['CF-Visitor']       ?? $_SERVER['HTTP_CF_VISITOR']       ?? '';
 $cf_asn      = $req_headers['CF-Connecting-IP-Country'] ?? '';
 
+// X-Proxyprof-Proxy: proxyprof tarafından eklenir, formati "type://ip:port".
+// Judge'ın AYRI olarak göremediği iki bilgiyi taşır: proxy'nin protokolü ve
+// dinleme portu. SPOOFABLE — header'a herkes herhangi bir değer yazabilir;
+// bu yüzden log'da seen_ip ile cross-reference yapılır.
+$client_proxy_raw = $req_headers['X-Proxyprof-Proxy']
+                 ?? $_SERVER['HTTP_X_PROXYPROF_PROXY']
+                 ?? '';
+$client_type = $client_ip = '';
+$client_port = 0;
+if ($client_proxy_raw !== '') {
+    if (preg_match(
+        '#^(http|https|socks4|socks5)://([\d.]+):(\d{1,5})$#i',
+        $client_proxy_raw, $m,
+    )) {
+        $client_type = strtolower($m[1]);
+        $client_ip   = $m[2];
+        $client_port = (int) $m[3];
+        if ($client_port < 1 || $client_port > 65535) {
+            $client_port = 0;
+            $client_ip = '';
+            $client_type = '';
+        }
+    }
+}
+
 // Strip every CF-* header so they don't surface in the dump. Without this, the
 // CF-* keys would NOT trigger detect_level()'s PROXY_HEADERS check (they're
 // not in that list), but they'd still clutter the output and reveal the judge
@@ -68,11 +117,17 @@ foreach (array_keys($req_headers) as $k) {
         unset($req_headers[$k]);
     }
 }
-// Also drop CDN-Loop (CF adds it to prevent loops) and X-Forwarded-* values
-// CF appended automatically — the *original* X-Forwarded-For from the proxy
-// is preserved, only CF's appended entries would inflate the chain. We keep
-// the header as-is to mirror what classic judges report.
+// Also drop CDN-Loop (CF adds it to prevent loops) and X-Proxyprof-* internal
+// headers — they'd otherwise show up in the response and could even trip the
+// proxy-header detection on some custom detectors. The *original*
+// X-Forwarded-For from the proxy is preserved; only judge-internal noise is
+// stripped here.
 unset($req_headers['CDN-Loop']);
+foreach (array_keys($req_headers) as $k) {
+    if (stripos($k, 'x-proxyprof-') === 0) {
+        unset($req_headers[$k]);
+    }
+}
 
 // Assemble normalised dump. REMOTE_ADDR uses CF-Connecting-IP when present;
 // otherwise falls back to the actual TCP peer (only meaningful when this
@@ -110,3 +165,39 @@ foreach ($dump as $k => $v) {
        . "\n";
 }
 echo "</pre>\n";
+
+// ----------------------------------------------------------------------------
+// Visit logging — opt-in via $LOG_FILE at top of file.
+// One JSON record per line (JSONL). Append-only with flock to serialise
+// concurrent writers. Logging failures are silenced — the judge response is
+// already flushed to the client by this point and must not be affected.
+// ----------------------------------------------------------------------------
+if ($LOG_FILE !== '') {
+    $entry = [
+        'ts'          => gmdate('c'),                          // ISO 8601 UTC
+        'seen_ip'     => $cf_ip ?: ($_SERVER['REMOTE_ADDR'] ?? ''),
+        'seen_port'   => (int) ($_SERVER['REMOTE_PORT'] ?? 0),
+        'country'     => $cf_country ?: null,
+        'client_type' => $client_type ?: null,
+        'client_ip'   => $client_ip ?: null,
+        'client_port' => $client_port ?: null,
+        // UA is truncated — proxies often inject huge fingerprinting strings.
+        'ua'          => substr($req_headers['User-Agent']
+                                ?? $_SERVER['HTTP_USER_AGENT'] ?? '', 0, 200),
+        'cf_ray'      => $cf_ray ?: null,
+    ];
+    $line = json_encode(
+        $entry,
+        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+    );
+    if ($line !== false) {
+        $fh = @fopen($LOG_FILE, 'ab');
+        if ($fh !== false) {
+            if (@flock($fh, LOCK_EX)) {
+                @fwrite($fh, $line . "\n");
+                @flock($fh, LOCK_UN);
+            }
+            @fclose($fh);
+        }
+    }
+}
