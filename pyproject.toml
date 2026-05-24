@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proxyprof"
+version = "2.0.0"
+description = "Async proxy profiler — proxine boru hattının canlılık + anonimlik testçisi."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Özgür Koca", email = "ozgurkoca@gmail.com"}]
+keywords = ["proxy", "http", "https", "socks4", "socks5", "anonymity", "checker"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Internet :: Proxy Servers",
+]
+dependencies = [
+    "aiohttp>=3.9",
+    "aiohttp-socks>=0.9",
+]
+
+[project.scripts]
+proxyprof = "proxyprof:main"
+
+[project.urls]
+Homepage = "https://github.com/enseitankado/proxy-profiler"
+Issues = "https://github.com/enseitankado/proxy-profiler/issues"
+
+[tool.setuptools]
+py-modules = ["proxyprof", "judges"]

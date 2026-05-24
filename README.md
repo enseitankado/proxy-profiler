@@ -1,223 +1,407 @@
+# 🛰️ Proxy Profiler
 
-# NextGen Proxy Profiler
+Bir proxy listesini saniyeler içinde **canlılık**, **anonimlik seviyesi** ve
+isteğe bağlı **erişim testi** açısından profilleyen async Python aracı.
+[Proxine](https://github.com/enseitankado/proxine) tarafından toplanan ham
+listeyi süzmek için tasarlandı.
 
-The scanner (proxyprof) scans and analyzes **http**/**https**/**socks4**/**socks5** proxies quickly. It can complete thousands of proxy scans in seconds by running the Curl tool multi-threaded in the background.
+> **Boru hattındaki yeri:** proxine toplar, proxyprof eler.
+> ```
+> proxine http -s | proxyprof http -l 1 -o working.lst
+> ```
 
-***Some interesting features:***
+------------------------------------------------------------
 
- - Detects security level of the proxy. Elite, Anon or Transparent.
- - Checks if the proxy has permission from any firewall.
- - Receives input from STDIN and transmits to STDOUT which allows chaining with other tools.
-   
-***Some features to add in future***
- - Checking tunneling support.
- - Private (password protected) proxy support un:pw.
- - Comprohensive black-list/ban-list checking.
-   
-# Requirements
-PHP, Curl, PHP-Curl extension, [PHP-Curl class](https://github.com/php-curl-class), [PHP-CLI-Progress-Bar](https://github.com/guiguiboy/PHP-CLI-Progress-Bar)
-> Note: proxyprof use modified version of PHP-Curl class so do not update the library.
+## Özellikler
 
-# Installation
+- **Async (asyncio)**. 1.000+ proxy'yi eşzamanlı test eder; threading'in tipik
+  RAM şişmesi olmadan.
+- **HTTP / HTTPS / SOCKS4 / SOCKS5** desteği — `aiohttp-socks` üzerinden tek
+  arabirim.
+- **Anonimlik sınıflandırması** (4 alt kategori):
+  - **Elite (L1)** — IP ve proxy varlığı gizli
+  - **Anonymous (L2)** — IP gizli, proxy belli (`Via` / `X-Forwarded-*` ekler)
+  - **Anonymous + Distorting** — IP gizli, **sahte** bir IP enjekte ediliyor
+  - **Transparent (L3)** — gerçek IP sızıyor
+- **HTTPS tünel testi** (`--tunnel-test`). HTTP/HTTPS proxy'ler için CONNECT
+  desteği ölçülür (gstatic.com/generate_204'e 204 yanıtı şart). SOCKS doğası
+  gereği tünel'er, otomatik geçilir.
+- **Multi-URL erişim testi** (`-a https://a,https://b`). Hepsi geçmek
+  zorunda — birden çok gatekeeper'a karşı süzgeç.
+- **Hız metrikleri.** Tüm başarılı sondajların p50/p95 latency'si özette
+  raporlanır.
+- **Geolokasyon** (CF judge ile, ücretsiz). Kendi Cloudflare-korumalı
+  judge'ınızı kullanıyorsanız `CF-IPCountry` header'ı otomatik çıkarılıp her
+  proxy'nin çıkış ülkesi rapor edilir — ekstra API çağrısı yok.
+- **Yaşayan judge seçimi.** İçeride 9 HTTP + 3 HTTPS judge listesi var; ilk
+  yanıt veren kullanılır. `-j` ile özel judge geçilebilir.
+- **Proxine-uyumlu boru hattı.** Default girdi stdin, default çıktı stdout
+  (sadece `IP:PORT` satırları); progress/özet stderr'e gider.
+- **Tek-satır TTY progress** + sonda Unicode kutu özet — proxine ile aynı
+  görsel dil.
+
+------------------------------------------------------------
+
+## Kurulum
+
+Python ≥ 3.10 gerekir.
 
 ```bash
-$ git clone https://github.com/enseitankado/proxy-profiler.git
-$ cd proxy-profiler
-$ php proxyprof.php -h
+git clone https://github.com/enseitankado/proxy-profiler.git
+cd proxy-profiler
 
- Author ozgurkoca: github.com/enseitankado/
+# venv önerilir
+python3 -m venv .venv
+source .venv/bin/activate
 
- -h                     Show this help.
- -p <host:ip>           Check proxy(s). Comma supported.
- -t <type>              Proxy types: http/https, socks4, socks5
- -f <file_name/STDIN>   Input proxy file. Each line has an IP:port. STDIN supported.
- -o <file_name/STDOUT>  Output proxy file or STDOUT ('STDOUT' is casesensitive).
- -l <level>             Min proxy level output filter. Defeault: 3
- -n <num>               Thread count. Default: 250
- -c <secs>              Connection timeout. Default: 5 secs.
- -a <URL>               Blocking test URL. Ex. cloudflare.com protected web service.
- -j <URL>               Judge URL. Default: random azenv.php
- -s                     Silent. No output.
- -g                     List only good proxies.
- -r                     Show progress bar.
-
- Current Installation:
-
-   PHP 7.4.20
-   CURL 7.70.0
-   OpenSSL 1.1.1k  25 Mar 2021
-
- About proxy levels:
-
-   1: Elite proxy servers hide both your IP address and the fact that you are using a proxy server at all.
-   2: An anonymous proxy does not reveal your IP address but does reveal that you are using a proxy server.
-   3: Transparent proxies do not hide your IP Address and they don’t alter any user information.
+pip install .
+proxyprof --help
 ```
 
-proxyprof is PHP-Cli tool and requires some librarys. When you run the tool for the first time, it tests whether the required plug-ins are installed. If it is not installed, it stops working and lists the tools that need to be installed. For example:
+Veya bağımlılıkları doğrudan yükleyip script'i çalıştırabilirsiniz:
 
 ```bash
-$ php proxyprof.php
-
-Multibyte string (mb_) library not installed !
-To install and enable the library run commands below:
-
-	sudo apt install php7.4-mbstring
-	sudo phpenmod -v 7.4 mbstring
-
-
-PHP curl library not installed !
-To install and enable the library run commands below:
-
-	sudo apt install php7.4-curl
-	sudo phpenmod -v 7.4 curl
+pip install aiohttp aiohttp-socks
+./proxyprof.py --help
 ```
 
+> **Eksik bağımlılık:** proxyprof TTY'de çalışırken `aiohttp` veya
+> `aiohttp-socks` yüklü değilse **tek bir soru** sorar:
+> *"Auto-setup will create ./.venv and install aiohttp aiohttp-socks there… Proceed? [Y/n]"*.
+> `Y` denirse yerel `.venv` oluşturulur, pip gerekirse `get-pip.py` ile
+> bootstrap edilir, paketler yüklenir, proxyprof venv'in Python'uyla yeniden
+> başlatılır. Sudo veya sistem-paket değişikliği yoktur, PEP 668 kısıtlamasına
+> takılmaz. Sonraki çalıştırmalarda `python3 proxyprof.py` komutu yerel
+> `.venv`'i sessizce tespit eder; ek soru çıkmaz.
+>
+> Boru hatlarında (TTY değilken) prompt çıkmaz; statik hata mesajıyla çıkar ki
+> script'iniz yanıltıcı bir cevap beklemesine takılmasın.
 
-# Command Line Arguments
- **-h**
- Show this help.
- 
- **-p \<host:ip>**
- It is used to specify comma-separated IP:PORT pairs of proxy servers. Check example below.
- 
- **-t \<type>**
-  Specifiy proxy types: http/https, socks4 or socks5.
- 
- **-f \<file_name>**
-  Input proxy file. Each line has an IP:PORT format. 
- 
-> **Hint:** If input proxy file and output proxy file name is not same and output file is already exists then output file content merged into input proxy file and will be scanned alltogether again.
- 
- **-o \<file_name/STDOUT>**
- Output proxy file or STDOUT ('STDOUT' is casesensitive).  Specifies the name of the file to save the scan results. Proxy servers that meet the scanning criteria are saved in this file. Proxy servers are registered in the same format (IP:PORT) as recorded in the input file (-f).
+------------------------------------------------------------
 
-> **Hint:** If STDOUT is written as the filename, the scan result is simply redirected to standard output. That is, it is printed on the
-> screen. This is a plain output with one IP:PORT per line. This feature
-> is useful for performing chained command executions where the output
-> of proxyprof is routed as input to another tool.
+## Kullanım
 
- **-l \<level>**
- Min proxy level output filter. The default value is 3. After establishing a TCP connection to the proxy, the security level is tried to be determined. To determine the security level, the script azenv.php is used, an example of which is also in this repository. Using the scanned proxy, a request is made to one of the internet copies of the script assigned as the judge and the HTTP headers reaching the target are scanned. The security levels of the Rated Proxies are listed below. The main difference that separates these three proxy types is the level of security and privacy they offer.
-
-> **Hint:** When proxyprof is used with the -g (good) option, only servers with the minimum security level specified by this parameter
-> are included in the result set.  
-> 
-> **Proxy Security Levels** 
-> Level 3: Transparent proxies do not hide your IP Address and they don’t alter   any user information.   Level
-> 2: An anonymous proxy does not reveal your IP address but does reveal
-> that you are using a proxy server. Level 1: Elite proxy servers hide
-> both your IP address and the fact that you are using a proxy server at
-> all.
-
- 
- **-n \<num>**
- Thread count. Default: 250. proxyprof can perform multiple simultaneous scans with low resource requirements. This saves a lot of time, especially when tens of thousands of proxies need to be scanned. 
-
-> **Hint 1:** The firewall on your line may be configured against opening 
-> a large number of TCP connections in a short time. Especially when scanning 
-> SOCKS4/SOCKS5 servers, it opens a lot of sockets in a short time. 
-> If you get a meaningless amount of failed scan results, try again 
-> by reducing the number of threads. For example, set the number of threads 
-> between 1-5. The default value is 250.
-
-> **Hint 2:** If you get PHP memory allocate error, reduce the number of threads or 
-> increase the memory limit that can be used with the -d parameter 
-> of the php interpreter. 
-> For example php -d memory_limit=500MB script_to_run.php
- 
- **-c \<secs>**
- Connection timeout. Default: 5 secs. During the handshake process with a proxy, it waits for a certain maximum amount of time to respond to the connection request. Otherwise, the connection will remain open for a long time, causing excessive resource consumption and reduced browsing speed. If the time defined by this parameter is exceeded, it is judged that the proxy is not responding. A good proxy should respond instantly and quickly.
- 
- **-a \<URL>**
- Blocking test URL. Ex. cloudflare.com protected web service. Especially since proxy servers open to public use are used by many people for many different purposes, they can easily fall into the blacklists of protection systems. This option checks if the proxy is blacklisted by a particular network/server. An attempt is made to connect to the URL address specified with this parameter using a proxy, and at the end the result is listed as blocked or unblocked. This option becomes a mandatory condition when used with -g (good) and only unblocked addresses are included in the result set.
-
- **-j \<URL>**               
- Judge URL. Default: random azenv.php. The Judge URL is accessed using the proxy and reflects back client information that the proxy carries with http headers. There are already many judge URLs in proxyprof's list and choose one of them at the start of the scan. You can see a list of Judge URLs in the source code. If you want to use a custom Judge url use this parameter. A judge file that proxyprof is compatible with has been shared in the repository with the name [azenv.php](https://github.com/enseitankado/proxy-profiler/blob/main/azenv.php).
- 
- **-s**                     
- Silent. No any output.
- 
- **-g**
- List only good proxies. This means scan results match with scan criterias such as timeout, proxy security level and blocking test results. 
- 
- **-r**
- Show progress bar.
-
-
-# Examples
-Scans socks4 proxy list from socks4.lst file and display scan results.
 ```bash
-    $ php proxyprof.php -t https -f socks4.lst
+proxyprof <http|https|socks4|socks5> [seçenekler]
 ```
 
-Scans https proxy list from https.lst file and display scan results, save good proxies to goodhttps.lst in IP:PORT format.
+### Bayraklar
+
+| Uzun | Kısa | Varsayılan | Açıklama |
+|---|---|---|---|
+| `--file` | `-f` | stdin | Proxy listesi dosyası. `-` veya bayrak yok = stdin. |
+| `--output` | `-o` | — | Süzülmüş listeyi bu dosyaya yaz; stdout boş kalır. |
+| `--level` | `-l` | `1` | Kabul edilen maks. anonimlik seviyesi. `1`=elite, `2`=elite+anon, `3`=hepsi. |
+| `--concurrency` | `-c` | `500` | Eşzamanlı sonda sayısı. |
+| `--timeout` | `-T` | `5` | Proxy başına timeout (saniye). |
+| `--retries` | `-r` | `1` | Başarısız proxy başına tekrar deneme. |
+| `--judge` | `-j` | otomatik | Özel azenv.php-uyumlu judge URL'i. CF judge önerilir. |
+| `--access` | `-a` | — | Proxy bu URL'(ler)e erişebiliyor mu? Virgülle çoklu URL; hepsi pass etmek zorunda. |
+| `--tunnel-test` | — | kapalı | HTTP/HTTPS proxy'lerde CONNECT tüneli sınanır. |
+| `--verbose` | `-v` | — | Her proxy için satır log; progress kapatılır. |
+| `--silent` | `-s` | — | Yalnız stdout (proxy listesi); tüm stderr susturulur. |
+
+### Örnekler
+
 ```bash
-    $ php proxyprof.php -t https -f https.lst -o goodhttps.lst
+# Proxine ile zincir: HTTP proxy'leri topla, sadece elite olanları çıkar
+proxine http -s | proxyprof http -l 1 -o elite.lst
+
+# Dosyadan oku, elite + anonymous tut, dosyaya yaz
+proxyprof http -f raw.lst -l 2 -o filtered.lst
+
+# SOCKS5 listesi, 1000 eşzamanlı, 8s timeout, satır satır log
+proxyprof socks5 -f socks5.lst -c 1000 -T 8 -v
+
+# Cloudflare erişim testi: proxy CF korumalı hedefe ulaşabiliyor mu?
+proxyprof http -f raw.lst -a https://example.cloudflare.com
+
+# Çoklu gatekeeper: proxy hem CF'e hem Google'a ulaşıyor olsun
+proxyprof http -f raw.lst -a https://cloudflare.com,https://google.com
+
+# HTTPS tünel desteği şartı (CONNECT yetkin proxy'leri süz)
+proxyprof http -f raw.lst --tunnel-test
+
+# Kendi Cloudflare-korumalı judge'ınla: ülke bilgisi otomatik gelir
+proxyprof http -f raw.lst -j https://yourdomain.tld/proxyjudge.php
+
+# Tamamen sessiz; başka bir script'e besleme
+proxine socks5 -s | proxyprof socks5 -s | head -20
 ```
 
-Scans https proxy list from https.lst file and output good proxies to standart display in IP:PORT format.
-```bash
-    $ php proxyprof.php -t https -f https.lst -o STDOUT 
+------------------------------------------------------------
+
+## Çıktı
+
+### Stdout
+
+Sıralı, dedupe edilmiş, süzgeçten geçen `IP:PORT` satırları:
+
+```
+1.2.3.4:8080
+1.2.3.4:8443
+5.6.7.8:3128
 ```
 
-Scan HTTPS proxy server list in multithreaded (1500 thread) with 20 seconds timeout delay. If proxy is up then reach to URL "https://www.tankado.com/" behind the CloudFlare (CF) network and test blocking or not blocking by CF. Displays only good servers with non blocked in a table. 
-```bash
-    $ php proxyprof.php -t https -f https.lst -g -n 1500 -a https://www.tankado.com/ -c 20
+`-o FILE` verilirse stdout boş kalır; satırlar dosyaya yazılır.
+
+### Stderr
+
+Çalışma sırasında tek satırlık ilerleme:
+
+```
+[████████████░░░░░░░░]  60%  600/1000  ✓ 5.6.7.8:3128         good   142
 ```
 
-If needed, start a SOCKS-5 proxy tunnel: 
-```bash
-    $ ssh -D 8080 -C -N -v  user@example.com
+Sonda özet kutusu (tüm özellikler aktif):
+
+```
+┌──────────┬───────────────────────────────────────────────────────────┐
+│ protocol │ http                                                      │
+│ judge    │ https://yours.tld/proxyjudge.php                          │
+│ publicIP │ 78.180.x.x                                                │
+│ scanned  │ 1,000 proxies                                             │
+│ good     │ 142 elite, 38 anon (10 distorting), 17 transparent  →  out.lst│
+│ bad      │ 803 (timeout/error)                                       │
+│ blocked  │ 24 access denied                                          │
+│ tunnel   │ 118 CONNECT-capable (of 197 good)                         │
+│ timing   │ p50 1.2s · p95 4.1s                                       │
+│ country  │ TR=42 US=28 DE=21 RU=18 BR=14  +74 more                   │
+│ elapsed  │ 12.4s                                                     │
+└──────────┴───────────────────────────────────────────────────────────┘
 ```
 
-Scan two proxy:
+Satırların görünmesi koşula bağlı:
+- `blocked` → `-a` verildiyse
+- `tunnel` → `--tunnel-test` aktifse
+- `country` → judge `PROXY_COUNTRY` / `CF-IPCountry` döndürüyorsa (yani CF judge kullanılıyorsa)
+- `distorting` → en az 1 distorting proxy yakalandıysa
+
+### Çıktı modu tablosu
+
+| Komut | stdout | stderr |
+|---|---|---|
+| `proxyprof http` | süzülmüş liste | progress → özet |
+| `proxyprof http -v` | süzülmüş liste | satır log → özet |
+| `proxyprof http -o f.lst` | (boş) | progress → özet |
+| `proxyprof http -s` | süzülmüş liste | (boş) |
+| `proxyprof http -o f.lst -s` | (boş) | (boş) |
+
+------------------------------------------------------------
+
+## Anonimlik seviyeleri
+
+Judge'tan geri dönen request header'larına bakılır. Üç seviye + bir alt tür:
+
+| Seviye | İsim | Tespit kuralı | Anlam |
+|---|---|---|---|
+| **1** | Elite | Public IP yok, proxy header'ı yok | Hem IP'nizi hem proxy varlığını gizler. |
+| **2** | Anonymous | Public IP yok, ama `via` / `x-forwarded-*` / `proxy-*` var | IP'nizi gizler ama "bir proxy kullanılıyor" der. |
+| **2** + *distorting* | Distorting | L2 + `X-Forwarded-For` benzeri header'da public IP'den farklı, routable bir IPv4 var | IP'nizi gizler **ve sahte bir IP enjekte eder**. Fingerprint kaçırma için kullanılır, güven açısından risklidir. |
+| **3** | Transparent | Public IP header'larda yansıyor | IP'nizi gizlemez; sadece routing yapar. |
+
+`-l 1` (default) sadece elite proxy'leri tutar. `-l 2` elite + anonymous
+(distorting dahil), `-l 3` hepsi. Özet kutusunda distorting alt sayımı ayrıca
+gösterilir.
+
+### Distorting tespitinin sınırı
+
+Header'daki sahte IP **public range'de görünen** bir IPv4 olmalı (RFC1918,
+loopback, link-local elenir). Bir proxy header'a `0.0.0.0` ya da `192.168.1.1`
+yazıyorsa distorting değil — sadece kötü konfigüre edilmiş bir anonymous proxy.
+IPv6 ya da IP olmayan değerler de tespit kapsamı dışında.
+
+------------------------------------------------------------
+
+## Süzgeçler ve metrikler
+
+Anonimlik dışındaki üç ekstra süzgeç (`--tunnel-test`, `-a`, hız) ve iki ekstra
+metrik (timing percentiles, ülke dağılımı) — hepsi proxine boru hattının
+ötesinde ham listeyi gerçek üretim kalitesine indirgemeye yarar.
+
+### HTTPS tünel testi (`--tunnel-test`)
+
+**Neden:** Bir HTTP proxy düz HTTP isteklerini iletiyor olabilir ama HTTPS için
+gereken `CONNECT` komutunu desteklemiyor olabilir. Bugün neredeyse her site
+HTTPS olduğundan, CONNECT-yetkisi olmayan HTTP proxy pratik olarak çoğu hedefe
+işe yaramaz.
+
+**Ne yapar:** Her HTTP/HTTPS proxy için ek bir istek atar: `https://www.gstatic.com/generate_204`.
+204 dönerse CONNECT destekleniyor demektir. SOCKS proxy'leri doğası gereği
+tünel kurar; otomatik geçilir, ek istek yapılmaz.
+
+**Maliyet:** Tarama süresi yaklaşık 2 katına çıkar (HTTP/HTTPS proxy'leri için
+proxy başına 2 istek). Concurrency artırılarak telafi edilebilir.
+
+**Kullanım:**
+
 ```bash
-    $ php proxyprof.php -t socks4 -p 103.105.41.209:4145,194.27.16.17:62013   
+proxyprof http -f raw.lst --tunnel-test -o tunneled.lst
 ```
- 
-Use STDIN to input scan list example-1:
-```bash
-    $ printf "31.44.82.182:5678\n185.139.56.133:4145" | php proxycheck.php -t socks4 -n 1000 
-```	
 
-Use STDIN to input scan list example-2:
+**Sonuç:**
+- Stdout'a (veya `-o` dosyasına) sadece tünel testini geçen proxy'ler yazılır
+- Özet kutuda: `tunnel │ 118 CONNECT-capable (of 197 good)`
+- Verbose log'da satır sonuna `tun` / `no-tun` etiketi düşer
+
+### Çoklu gatekeeper erişim testi (`-a`)
+
+**Neden:** Bir proxy Cloudflare'i geçebilir ama Google CAPTCHA gösterebilir,
+veya tersine. "Her yerden çalışan" proxy'leri ayıklamak için tek bir gatekeeper
+yeterli değil.
+
+**Ne yapar:** Verdiğiniz URL listesinin **hepsine** proxy üzerinden istek atar.
+Tek bir URL bile fail ederse proxy "blocked" sayılır.
+
+**Kullanım:** Virgülle ayır, hepsi `http://` veya `https://` ile başlasın:
+
 ```bash
-    $ cat socks4.lst | php proxycheck.php -t socks4 -n 1000 -g
+proxyprof http -f raw.lst \
+  -a https://www.cloudflare.com,https://www.google.com,https://www.wikipedia.org
 ```
 
+**Sonuç:**
+- Sadece tüm URL'lere ulaşan proxy'ler stdout'a düşer
+- Özet kutuda: `blocked │ 24 access denied`
 
-# Disclaimer
+### Hız metrikleri (otomatik)
 
-This is an open source for everyone, you may redistribute, modify, use patents and use privately without any obligation to redistribute. but it should be noted to include the source code of the library that was modified (not the source code of the entire program), include the license, include the original copyright of the author (Özgür Koca), and include any changes made (if modified). Users do not have the right to sue the creator when there is damage to the software or even demand if there is a problem caused by the makers of this tool. because every risk is caused by the user risk itself.
+**Neden:** Bir proxy "çalışıyor" demek hızlı olduğu anlamına gelmez. 10 saniyede
+yanıt veren bir proxy teknik olarak iyi ama pratikte yavaş. Bir taramanın
+genel hız resmini görmeden kalite değerlendirmesi yapılamaz.
 
-# About Proxies
-## HTTP proxies
-HTTPS proxies generally support HTTP, but not vice versa. For the most protection, while browsing the internet, an elite proxy is the best choice. That doesn’t mean transparent and anonymous don’t have their uses. Public elite proxies are more overloaded than transparent servers, so if you were looking for something that loads pages faster but aren’t concerned about privacy, then a transparent proxy would be the best choice. The best proxy option is determined by your needs.
+**Ne yapar:** Tüm başarılı sondajların yanıt sürelerinin **medyan** (p50) ve
+**%95'inci yüzdelik** (p95) değerlerini hesaplar.
 
-## SOCKS4 and SOCKS5 proxies
-SOCKS is a layer 5 protocol, and it doesn’t care about anything below that layer in the Open Systems Interconnection (OSI) model — meaning you can’t use it to tunnel protocols operating below layer 5. This includes things such as ping, Address Resolution Protocol (ARP), etc. From a security perspective, it won’t allow an attacker to perform scans using tools such as Nmap if they are scanning based on half-open connections because it works at layer 5.
+**Kullanım:** Otomatik. Hiçbir bayrak gerekmez; her tarama sonunda görünür.
 
-Since SOCKS sits at layer 5, between SSL (layer 7) and TCP/UDP (layer 4), it can handle several request types, including HTTP, HTTPS, POP3, SMTP and FTP. As a result, SOCKS can be used for email, web browsing, peer-to-peer sharing, file transfers and more.
+**Sonuç:**
 
-Other proxies built for specific protocols at layer 7, such as an HTTP proxy that is used to interpret and forward HTTP or HTTPS traffic between client and server, are often referred to as application proxies. There are only two versions: SOCKS4 and SOCKs5. The main differences between SOCKs5 and SOCKS4 are:
+```
+timing   │ p50 1.2s · p95 4.1s
+```
 
-SOCKS4 doesn’t support authentication, while SOCKs5 supports a variety of authentication methods; and SOCKS4 doesn’t support UDP proxies, while SOCKs5 does. A SOCKs5 proxy is more secure because it establishes a full TCP connection with authentication and uses the Secure Shell (SSH) encrypted tunneling method to relay the traffic.
+**Nasıl okunur:**
+- **p50 1.2s** → proxy'lerin yarısı 1.2 saniyeden hızlı (medyan latency)
+- **p95 4.1s** → proxy'lerin %95'i 4.1 saniyeden hızlı (worst-case'in alt sınırı)
+- p95 ile p50 arasındaki büyük fark "outlier'lar var" demektir
+- p95 timeout'a yakınsa (`-T 5` iken p95 4.5s gibi) liste zar zor sığıyor demektir
 
-SOCKS5 supports multiple authentication methods, SOCKS4 does not support authentication;
-SOCKS5 supports UDP proxy, SOCKS4 does not support UDP proxy;
-SOCKS5 is more secure because it uses an authenticated TCP connections and SSH encrypted tunnels;
+### Geolokasyon (CF judge ile, ücretsiz)
 
-## Star History
+**Neden:** Çoğunlukla sadece belirli ülkelerdeki proxy'ler işe yarar (örn. TR
+banka sitesi için TR proxy, US streaming için US proxy). Geolokasyon
+genellikle MaxMind DB indirmek veya rate-limited API'ler çağırmak demektir —
+ek karmaşıklık.
 
-[![Star History Chart](https://api.star-history.com/svg?repos=enseitankado/proxy-profiler&type=Date)](https://star-history.com/#enseitankado/proxy-profiler&Date)
+**Ne yapar:** Cloudflare her proxy'den gelen isteğin IP'sini çözer ve
+`CF-IPCountry` header'ı ekler. CF-aware judge (`proxyjudge.php`) bu header'ı
+yakalayıp `PROXY_COUNTRY` alanı olarak yansıtır. Proxyprof bunu otomatik
+çıkartır. Ek API çağrısı, ek bağımlılık, ek dosya yok.
 
-# Donation
+**Kullanım:** Sadece CF-protected domain'inizde host ettiğiniz judge'u
+gösterin:
 
-Would you like to buy me a coffee? [Click](https://www.buymeacoffee.com/ozgurkoca).
+```bash
+proxyprof http -f raw.lst -j https://yours.tld/proxyjudge.php
+```
 
-# Author
+**Sonuç:**
+- Özet kutuda en kalabalık 5 ülke + diğerlerinin toplamı:
+  ```
+  country  │ TR=42 US=28 DE=21 RU=18 BR=14  +74 more
+  ```
+- Verbose log'da her satıra ülke kodu düşer: `[ ok ]  L1  1.2.3.4:8080  1.2s  out=1.2.3.4  TR tun`
 
-I'm Özgür. I'm a teacher at a vocational [school](https://samsuneml.meb.k12.tr/)
-Repos: https://github.com/enseitankado
-Blog: www.tankado.com
+**Önemli:** Public azenv judge'larında country bilgisi yok — sadece CF-aware
+judge ile çalışır.
+
+### Hepsini birlikte
+
+```bash
+# proxine'den taze HTTP proxy → kendi CF judge'una karşı test → sadece elite +
+# CONNECT-yetkili + üç gatekeeper'a geçen proxy'leri al
+proxine http -s | proxyprof http \
+  -j https://yours.tld/proxyjudge.php \
+  --tunnel-test \
+  -a https://www.cloudflare.com,https://www.google.com,https://www.wikipedia.org \
+  -l 1 \
+  -o production-ready.lst
+```
+
+Bu komut size production'a koymadan önce her açıdan elenmiş bir proxy listesi
+verir: elite anonimlik + HTTPS tüneli + 3 farklı gatekeeper'a erişim + ülke
+dağılımı raporu.
+
+------------------------------------------------------------
+
+## Cloudflare-aware judge (önerilir)
+
+Public azenv judge'ları zaman zaman ölür ve yavaş yanıt verir. Kendi
+Cloudflare-korumalı domain'iniz varsa repodaki `proxyjudge.php` dosyasını
+herhangi bir yere koyup `-j` ile gösterebilirsiniz:
+
+```bash
+# Yerel test
+curl https://yours.tld/proxyjudge.php
+
+# proxyprof ile
+proxyprof http -j https://yours.tld/proxyjudge.php -f raw.lst
+```
+
+Bu judge:
+- `CF-Connecting-IP`'yi `REMOTE_ADDR` olarak normalize eder → anonimlik
+  tespiti gerçek istemci (proxy çıkış) IP'sine karşı çalışır.
+- `CF-IPCountry`'yi `PROXY_COUNTRY` field'ı olarak expose eder → proxyprof
+  otomatik çekip özet kutusuna country dağılımı ekler. **Ekstra GeoIP DB
+  veya API çağrısı yok.**
+- Tüm `CF-*` header'larını çıktıdan strip eder → anonimlik tespitini
+  saptırmaz, judge'ın CF arkasında olduğu belli olmaz.
+
+> **Önemli:** Domain Cloudflare'de **"Proxied"** (turuncu bulut) modda olmalı.
+> "DNS only" (gri bulut) modunda CF header'ları gelmez, judge sıradan bir
+> azenv gibi çalışır (country bilgisi yok).
+
+------------------------------------------------------------
+
+## Mimari
+
+```
+proxy-profiler/
+├── proxyprof.py    # Async scanner + CLI (tek dosya, ~600 satır)
+├── judges.py       # Judge listesi + response parser + seviye + distorting + country
+├── proxyjudge.php  # Opsiyonel CF-aware judge — kendi domain'inde host et
+├── pyproject.toml  # aiohttp + aiohttp-socks bağımlılıkları
+└── README.md
+```
+
+- **`judges.py`** judge URL listesi, judge yanıtının iki olası formatını
+  (`<pre>KEY=VALUE</pre>` ve düz JSON) ayrıştırır, public IP + header
+  sözlüğünden seviye çıkarır.
+- **`proxyprof.py`** her proxy için tek bir `aiohttp_socks.ProxyConnector`
+  açar, `asyncio.Semaphore(N)` ile eşzamanlılığı sınırlar; sonuçlar tek bir
+  `gather` ile toplanır.
+
+------------------------------------------------------------
+
+## İlgili araçlar
+
+- **[Proxine](https://github.com/enseitankado/proxine)** — 60+ açık kaynaktan
+  ham proxy listesi toplayan aggregator. Proxyprof'un asıl girdi kaynağı.
+- **[EliteProxySwitcher](https://www.eliteproxyswitcher.com/)** — Windows GUI.
+- **[Open Proxy Checker](https://openproxy.space/software/proxy-checker/)** —
+  Windows liste doğrulayıcı.
+
+------------------------------------------------------------
+
+## Lisans
+
+MIT. Türev çalışmalarda orijinal yazar (Özgür Koca) atıfını koruyun. Yazılım
+"olduğu gibi" sunulur; kullanım riski tamamen kullanıcıya aittir.
+
+## Yazar
+
+**Özgür Koca** — meslek lisesinde
+[öğretmenlik](https://samsuneml.meb.k12.tr/) yapıyor.
+GitHub: [enseitankado](https://github.com/enseitankado) · Blog:
+[tankado.com](https://www.tankado.com)
