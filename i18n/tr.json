@@ -81,7 +81,7 @@
   "table.header.cc": "ÜLKE",
   "table.header.time": "SÜRE",
   "table.header.tun": "TÜNEL",
-  "table.header.mitm": "MITM",
+  "table.header.mitm": "MITM YOK",
   "table.header.acc": "ERİŞİM",
 
   "table.status.ok": "iyi",
@@ -94,7 +94,7 @@
   "table.bucket.cold": "SOĞUK",
 
   "progress.format": "[{bar}] {pct:3.0f}%  {done:>{digits}}/{total}  iyi:{ok:<4}  hata:{fail:<4}  atlanan:{skip:<4}  süre:{elapsed:5.1f}s",
-  "progress.legend": "  L1   Elite — IP ve proxy varlığı tamamen gizli; en yüksek anonimlik.\n  L2   Anonim — IP gizli ama Via/X-Forwarded-* header'ı proxy varlığını sızdırır.\n  L2d  Distorting — L2 + X-Forwarded-For'a SAHTE public IP enjekte eder (fingerprint kaçırma).\n  L3   Transparan — gerçek IP header'larda yansır; anonimlik yok, yalnız routing.\n  —    Veri yok: test çalışmadı ya da judge yanıt vermedi.",
+  "progress.legend": "  L1   Elite — IP ve proxy varlığı tamamen gizli; en yüksek anonimlik.\n  L2   Anonim — IP gizli ama Via/X-Forwarded-* header'ı proxy varlığını sızdırır.\n  L2d  Distorting — L2 + X-Forwarded-For'a SAHTE public IP enjekte eder (fingerprint kaçırma).\n  L3   Transparan — gerçek IP header'larda yansır; anonimlik yok, yalnız routing.\n  ✓ ×  TÜNEL / MITM YOK / ERİŞİM sütunlarında ✓ = sütun başlığı doğrulandı (iyi sonuç), × = doğrulanmadı.\n        Örn. MITM YOK ✓ → proxy TLS'i bozmuyor; MITM YOK × → MITM imzası bulundu, proxy TLS chain'i kırıyor.\n  —    Veri yok: test çalışmadı ya da judge yanıt vermedi.",
   "progress.label_elapsed": "süre",
   "progress.label_ok": "iyi",
   "progress.label_fail": "hata",

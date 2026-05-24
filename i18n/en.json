@@ -81,7 +81,7 @@
   "table.header.cc": "COUNTRY",
   "table.header.time": "TIME",
   "table.header.tun": "TUNNEL",
-  "table.header.mitm": "MITM",
+  "table.header.mitm": "NO MITM",
   "table.header.acc": "ACCESS",
 
   "table.status.ok": "ok",
@@ -94,7 +94,7 @@
   "table.bucket.cold": "COLD",
 
   "progress.format": "[{bar}] {pct:3.0f}%  {done:>{digits}}/{total}  ok:{ok:<4}  fail:{fail:<4}  skip:{skip:<4}  elapsed:{elapsed:5.1f}s",
-  "progress.legend": " LEVEL: L1=Elite · L2=Anonymous · L2d=Anonymous+Distorting · L3=Transparent   ·   — = data unavailable (test not run or judge didn't return)",
+  "progress.legend": "  L1   Elite — your IP and proxy presence are fully hidden; the strongest anonymity.\n  L2   Anonymous — IP is hidden but Via/X-Forwarded-* headers reveal a proxy is in use.\n  L2d  Distorting — L2 plus injects a FAKE public IP into X-Forwarded-For (fingerprint trick).\n  L3   Transparent — your real IP appears in headers; no anonymity, just routing.\n  ✓ ×  In TUNNEL / MITM / ACCESS columns, ✓ = the desirable outcome, × = the bad one.\n        E.g. MITM ✓ → proxy is clean (no TLS interception); MITM × → MITM signature found, proxy is rewriting the TLS chain.\n  —    No data: probe didn't run or judge didn't respond.",
   "progress.label_elapsed": "elapsed",
   "progress.label_ok": "ok",
   "progress.label_fail": "fail",
