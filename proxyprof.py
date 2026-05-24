@@ -637,13 +637,14 @@ class LiveTable:
     """
 
     BAR_WIDTH = 20
-    # Internal kod → (i18n anahtar, minimum genişlik). Genişlik runtime'da
-    # gerçek (çevrilmiş) etiketin uzunluğuyla max'lanır — örn. Türkçe'de "ÜLK"
-    # 3 char, mevcut min 2'den geniştir, sütun otomatik genişler.
+    # Internal kod → (i18n anahtar, içerik için minimum genişlik). Header
+    # label'ı bu min'den uzunsa sütun otomatik genişler (örn. en "OUTBOUND"
+    # 8 char > içerik IP'si zaten 15 olduğu için min 15 yine kazanır; tr
+    # "ERİŞİM" 6 char > min 3 ✓/×/— olduğu için 6'ya genişler).
     _FIXED: dict[str, tuple[str, int]] = {
         "#":      ("table.header.num",    5),
         "STATUS": ("table.header.status", 6),
-        "BKT":    ("table.header.bkt",    4),
+        "BKT":    ("table.header.bkt",    5),   # HOT/WARM/NEW/COLD 4, SICAK 5
         "PROXY":  ("table.header.proxy",  21),
         "LVL":    ("table.header.lvl",    3),
         "OUT":    ("table.header.out",    15),
@@ -654,9 +655,13 @@ class LiveTable:
         "ACC":    ("table.header.acc",    3),
     }
 
-    # Bucket isminin tek-karakter UI temsili. Sütun dar; özet bilgi yeterli.
-    _BUCKET_SHORT: dict[str, str] = {
-        BUCKET_HOT: "H", BUCKET_WARM: "W", BUCKET_NEW: "N", BUCKET_COLD: "C",
+    # Bucket internal name → i18n key. t() ile çevrilir; HOT/WARM/NEW/COLD
+    # ya da SICAK/ILIK/YENİ/SOĞUK olarak görünür. Tek harf kısaltma yok.
+    _BUCKET_KEY: dict[str, str] = {
+        BUCKET_HOT:  "table.bucket.hot",
+        BUCKET_WARM: "table.bucket.warm",
+        BUCKET_NEW:  "table.bucket.new",
+        BUCKET_COLD: "table.bucket.cold",
     }
 
     def __init__(self, enabled: bool, total: int, file=sys.stderr) -> None:
@@ -724,6 +729,27 @@ class LiveTable:
             elapsed=elapsed,
         )
 
+    def _progress_legend(self) -> str:
+        """Progress'in ALTINDA her güncellemede yazılan açıklama satırı.
+
+        Seviye kodlarının (L1/L2/L2d/L3) tam karşılıklarını ve "—" sütun
+        değerinin anlamını sürekli görünür tutar — kullanıcı tarama sırasında
+        tabloya bakarak hatırlamak zorunda kalmaz.
+        """
+        return t("progress.legend")
+
+    def _clear_progress_block(self) -> None:
+        """En alttaki 2-satırlık progress block'u ANSI ile temizle.
+
+        Cursor legend satırı sonunda varsayılır:
+          \\r\\033[K  → legend satırını sil, cursor satır başında
+          \\033[A    → bar satırına bir satır yukarı
+          \\r\\033[K  → bar satırını sil
+        Sonuç: cursor bar satırı başında, iki satır boş — yeni rows/progress
+        yazılabilir.
+        """
+        self.file.write("\r\033[K\033[A\r\033[K")
+
     def update(self, r: ScanResult) -> None:
         self.count += 1
         if r.ok:
@@ -741,9 +767,9 @@ class LiveTable:
             self._emit_header()
             self._headered = True
 
-        # Mevcut progress satırını temizle (varsa) — sadece TTY'de.
+        # Mevcut 2-satırlık progress block'u temizle (varsa) — sadece TTY'de.
         if self.use_ansi and self._progress_drawn:
-            self.file.write("\r\033[K")
+            self._clear_progress_block()
 
         # Sadece OK satırlarını tabloya ekle. Fail'ler sayıma katıldı ama
         # tablo gürültüsünü artırmasın.
@@ -771,7 +797,8 @@ class LiveTable:
                     return "—"
                 return "✓" if v else "×"
 
-            bkt = self._BUCKET_SHORT.get(r.bucket or "", "—")
+            bkt_key = self._BUCKET_KEY.get(r.bucket or "")
+            bkt = t(bkt_key) if bkt_key else "—"
             # MITM kolonu: True = TLS chain kırık (kırmızı bayrak). Mantıken
             # ters: ✓ = MITM YOK (güvenli), × = MITM şüphesi. _mark'a
             # `not mitm_suspected` veriyoruz ki ✓ = iyi semantiği kalsın.
@@ -794,9 +821,11 @@ class LiveTable:
             ]
             self.file.write(self._row(cells) + "\n")
 
-        # Progress satırını en altta yeniden çiz (TTY varsa).
+        # 2-satırlık progress block'u en altta yeniden çiz (TTY varsa):
+        #   bar+sayım satırı, ardından legend satırı.
         if self.use_ansi:
-            self.file.write(self._progress_line())
+            self.file.write(self._progress_line() + "\n")
+            self.file.write(self._progress_legend())
             self._progress_drawn = True
 
         self.file.flush()
@@ -804,14 +833,15 @@ class LiveTable:
     def finish(self) -> None:
         if not self.enabled:
             return
-        # Canlı progress satırını temizle.
+        # Canlı 2-satırlık progress block'u temizle.
         if self.use_ansi and self._progress_drawn:
-            self.file.write("\r\033[K")
+            self._clear_progress_block()
         # Tablo varsa bottom border'ı kapat.
         if self._headered:
             self.file.write(self._border("└", "┴", "┘") + "\n")
-        # Statik final progress satırı (her zaman, TTY olsun olmasın).
+        # Statik final 2-satırlık progress block (her zaman, TTY olsun olmasın).
         self.file.write(self._progress_line() + "\n")
+        self.file.write(self._progress_legend() + "\n")
         self.file.flush()
 
 
@@ -1382,36 +1412,48 @@ async def amain(args: argparse.Namespace) -> int:
 # CLI
 # ---------------------------------------------------------------------------
 
+class _HelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """Geniş yardım sütunu + terminal genişliğine uyumlu kaydırma.
+
+    argparse default `max_help_position=24` uzun bayrak isimlerinin (örn.
+    `--probation-max-skip N`) yardım metnini ikinci satıra atmasına yol açar.
+    Burada 32'ye çekiyoruz; çoğu bayrak tek satırda kalıyor. Genişliği de
+    terminal'e göre 80-110 arasında klipliyoruz; aşırı geniş ekranlarda satırlar
+    okunamayacak kadar uzamasın."""
+
+    def __init__(self, prog: str) -> None:
+        try:
+            cols = shutil.get_terminal_size().columns
+        except OSError:
+            cols = 100
+        width = max(80, min(cols, 110))
+        super().__init__(prog, max_help_position=32, width=width)
+
+
 def main(argv: list[str] | None = None) -> int:
     supported_langs = i18n.available_languages()
 
-    # Epilog'u t() ile kur — örnekler de çevrilebilir.
-    epilog = (
-        f"{t('cli.epilog_header')}\n"
-        "  proxine http -s | proxyprof http"
-        "                            "
-        f"{t('cli.example.pipe')}\n"
-        "  proxyprof http -f list.lst -l 2 -o ok.lst"
-        "                   "
-        f"{t('cli.example.file_in')}\n"
-        "  proxyprof socks5 -f - -c 1000 -T 8"
-        "                          "
-        f"{t('cli.example.stdin_socks5')}\n"
-        "  proxyprof http -f l.lst --access-test https://a.com,https://b.com"
-        "  "
-        f"{t('cli.example.access_test_custom')}\n"
-        "  proxyprof http -f l.lst --no-tunnel-test"
-        "                    "
-        f"{t('cli.example.no_tunnel')}\n"
-        "  proxyprof http -j https://yours.tld/proxyjudge.php"
-        "          "
-        f"{t('cli.example.cf_judge')}\n"
-    )
+    # Epilog'u t() ile kur — her örnek iki satır: komutun altında açıklama.
+    # Tek satır + fixed-width padding biçiminin yerine; dar terminal'de taşmaz,
+    # göz hızlı tarar.
+    _examples = [
+        ("proxine http -s | proxyprof http",                                  "cli.example.pipe"),
+        ("proxyprof http -f list.lst -l 2 -o ok.lst",                         "cli.example.file_in"),
+        ("proxyprof socks5 -f - -c 1000 -T 8",                                "cli.example.stdin_socks5"),
+        ("proxyprof http -f l.lst --access-test https://a.com,https://b.com", "cli.example.access_test_custom"),
+        ("proxyprof http -f l.lst --no-tunnel-test",                          "cli.example.no_tunnel"),
+        ("proxyprof http -j https://yours.tld/proxyjudge.php",                "cli.example.cf_judge"),
+    ]
+    epilog_lines = [t("cli.epilog_header")]
+    for cmd, key in _examples:
+        epilog_lines.append(f"  $ {cmd}")
+        epilog_lines.append(f"      {t(key)}")
+    epilog = "\n".join(epilog_lines) + "\n"
     p = argparse.ArgumentParser(
         prog="proxyprof",
         description=t("cli.description"),
         epilog=epilog,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=_HelpFormatter,
     )
     p.add_argument(
         "protocol",

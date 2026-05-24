@@ -186,19 +186,26 @@ Sıralı, dedupe edilmiş, süzgeçten geçen `IP:PORT` satırları:
 Tarama akarken stderr şu yapıdadır:
 
 ```
-┌───────┬────────┬──────┬───────────────────────┬─────┬─────────────────┬────┬────────┬─────┬──────┬─────┐
-│     # │ STATUS │ BKT  │ PROXY                 │ LVL │ OUT             │ CC │   TIME │ TUN │ MITM │ ACC │
-├───────┼────────┼──────┼───────────────────────┼─────┼─────────────────┼────┼────────┼─────┼──────┼─────┤
-│  3/30 │ ok     │ H    │ 8.211.194.85:4444     │ L1  │ 8.211.194.85    │ US │   1.2s │ ✓   │ ✓    │ ✓   │
-│  7/30 │ ok     │ N    │ 5.6.7.8:1080          │ L2d │ 5.6.7.8         │ DE │   0.8s │ ✓   │ ✓    │ ✓   │
-│ 12/30 │ filter │ W    │ 9.10.11.12:3128       │ L1  │ 9.10.11.12      │ —  │   2.1s │ ✓   │ ×    │ ✓   │
-└───────┴────────┴──────┴───────────────────────┴─────┴─────────────────┴────┴────────┴─────┴──────┴─────┘
+┌───────┬────────┬───────┬───────────────────────┬────────┬─────────────────┬─────────┬────────┬────────┬──────┬────────┐
+│     # │ STATUS │ BUCKET│ PROXY                 │ LEVEL  │ OUTBOUND        │ COUNTRY │   TIME │ TUNNEL │ MITM │ ACCESS │
+├───────┼────────┼───────┼───────────────────────┼────────┼─────────────────┼─────────┼────────┼────────┼──────┼────────┤
+│  3/30 │ ok     │ HOT   │ 8.211.194.85:4444     │ L1     │ 8.211.194.85    │ US      │   1.2s │ ✓      │ ✓    │ ✓      │
+│  7/30 │ ok     │ NEW   │ 5.6.7.8:1080          │ L2d    │ 5.6.7.8         │ DE      │   0.8s │ ✓      │ ✓    │ ✓      │
+│ 12/30 │ filter │ WARM  │ 9.10.11.12:3128       │ L1     │ 9.10.11.12      │ —       │   2.1s │ ✓      │ ×    │ ✓      │
+└───────┴────────┴───────┴───────────────────────┴────────┴─────────────────┴─────────┴────────┴────────┴──────┴────────┘
 [████████████████░░░░]  80%  24/30  ok:3     fail:21    skip:0     elapsed:  9.4s
+ LEVEL: L1=Elite · L2=Anonymous · L2d=Anonymous+Distorting · L3=Transparent   ·   — = data unavailable (test not run or judge didn't return)
 ```
 
-`MITM=×` üçüncü satırda: proxy CONNECT tüneli kurabildi (`TUN=✓`) ama TLS
+`MITM=×` üçüncü satırda: proxy CONNECT tüneli kurabildi (`TUNNEL=✓`) ama TLS
 sertifika doğrulama başarısız oldu — proxy TLS chain'i kendi sertifikasıyla
 kırıyor, **MITM imzası**. STATUS `filter`'a düşer ve stdout'a yazılmaz.
+
+Progress satırının altında her güncellemede legend görünür: seviye kodlarının
+açık karşılıkları (L1/L2/L2d/L3) ve "—" işaretinin anlamı — tabloda bir
+sütunda "—" görünüyorsa o test çalışmadı veya judge ilgili alanı döndürmedi
+(örn. public azenv'da COUNTRY yoktur, MITM testi `--no-tunnel-test` ile
+kapalıysa MITM sütunu —, vs.).
 
 **Tablo davranışı:**
 
@@ -216,15 +223,25 @@ kırıyor, **MITM imzası**. STATUS `filter`'a düşer ve stdout'a yazılmaz.
 | Sütun | Anlamı |
 |---|---|
 | `#` | Tamamlanma sırası / toplam |
-| `STATUS` | `ok` (her şey geçti) · `filter` (judge geçti, tunnel/access düştü) |
+| `STATUS` | `ok` (her şey geçti) · `filter` (judge geçti, tunnel/access/mitm düştü) |
+| `BUCKET` | Reputation grubu: `HOT` / `WARM` / `NEW` / `COLD` (reputation kapalıyken `—`). Türkçe arayüzde `SICAK` / `ILIK` / `YENİ` / `SOĞUK`. |
 | `PROXY` | IP:PORT |
-| `LVL` | `L1` elite · `L2` anon · `L2d` anon+distorting · `L3` transparent |
-| `OUT` | Judge'ın gördüğü çıkış IP'si (proxy'nin dış adresi) |
-| `CC` | ISO ülke kodu (CF judge kullanılırsa) |
+| `LEVEL` | `L1` elite · `L2` anonymous · `L2d` anonymous + distorting (sahte IP enjekte) · `L3` transparent |
+| `OUTBOUND` | Judge'ın gördüğü çıkış IP'si (proxy'nin dış adresi) |
+| `COUNTRY` | ISO ülke kodu (CF judge kullanılırsa) |
 | `TIME` | Toplam test süresi |
-| `TUN` | Tunnel testi: `✓` CONNECT açıldı · `×` kapalı · `—` test yok |
+| `TUNNEL` | Tunnel testi: `✓` CONNECT açıldı · `×` kapalı · `—` test yok |
 | `MITM` | TLS chain durumu: `✓` temiz · `×` MITM tespit edildi · `—` test yok |
-| `ACC` | Access testi: `✓` tüm gatekeeper'lara ulaştı · `×` en az biri fail · `—` test yok |
+| `ACCESS` | Access testi: `✓` tüm gatekeeper'lara ulaştı · `×` en az biri fail · `—` test yok |
+
+**Bir sütunda `—` ne demek?** İlgili test çalıştırılmadı veya judge o alanı
+döndürmedi:
+- `BUCKET` → `--no-reputation` ile reputation kapalı
+- `COUNTRY` → judge ülke alanı vermedi (public azenv'lar vermez; CF judge verir)
+- `OUTBOUND` → judge `REMOTE_ADDR` alanı dönmedi
+- `TUNNEL` → `--no-tunnel-test` ile devre dışı
+- `MITM` → tunnel testi kapalı (MITM aynı probe'a dayalı)
+- `ACCESS` → `--no-access-test` ile devre dışı
 
 **Tarama bittikten sonra** progress'in altında iki kutu sırayla yazılır.
 
