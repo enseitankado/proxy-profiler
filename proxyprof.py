@@ -255,23 +255,50 @@ ACCESS_AUTO_COUNT = 3
 ACCESS_AUTO_SENTINEL = "AUTO"
 
 
-def _judge_accepts_proxyprof_header(url: str) -> bool:
-    """Judge URL'i bizim CF-aware judge'umuz mu? Sadece o zaman
-    `X-Proxyprof-Proxy` gönderilir.
+_TRUSTED_JUDGE_DOMAINS_ENV = "PROXYPROF_JUDGE_DOMAIN"
 
-    Detection: URL path'inin SON SEGMENTI 'proxyjudge.php' veya 'proxyjudge'
-    (case-insensitive). Domain adında 'proxyjudge' geçen public servisler
-    (örn. proxyjudge.biz, proxyjudge.us) bu testten geçmez — onlar
-    azenv.php benzeri public judge'lardır, header sızıntısı istenmez.
 
-    Kullanıcı kendi judge'unu farklı bir isimle deploy ederse bu kontrol
-    fail eder; script'i 'proxyjudge.php' olarak adlandırmak yeterli."""
+def _resolve_trusted_judge_domains(cli_arg: str | None) -> list[str]:
+    """X-Proxyprof-Proxy header'ının gönderileceği güvenilir domain listesi.
+
+    Öncelik: CLI `--judge-domain` > env `PROXYPROF_JUDGE_DOMAIN` > boş liste.
+    Virgülle birden çok domain. Boş liste → header asla gönderilmez (güvenli
+    default; kullanıcı bilinçli olarak kendi judge domain'ini belirtmeli)."""
+    raw = cli_arg or os.environ.get(_TRUSTED_JUDGE_DOMAINS_ENV) or ""
+    out: list[str] = []
+    for piece in raw.split(","):
+        d = piece.strip().lower().strip(".")
+        if d:
+            out.append(d)
+    return out
+
+
+def _judge_accepts_proxyprof_header(
+    url: str, trusted_domains: list[str],
+) -> bool:
+    """Judge URL'inin domain'i kullanıcının güvenilir listesinde mi?
+
+    Match: `netloc == d` veya `netloc.endswith('.' + d)` (subdomain).
+    Port varsa stripped: 'tankado.com:8080' → 'tankado.com'.
+    Liste boşsa daima False — yani default davranışı "header gönderme"dir.
+
+    Bu kontrol path/script adına BAKMAZ. Domain sahipliği güveni belirler:
+    başkasının kendi domain'ine proxyjudge.php deploy etmesi senin
+    kimliğinin oraya sızmasını sağlamaz.
+    """
+    if not trusted_domains:
+        return False
     try:
-        path = urllib.parse.urlparse(url).path.lower()
+        netloc = urllib.parse.urlparse(url).netloc.lower()
     except (ValueError, AttributeError):
         return False
-    basename = path.rsplit("/", 1)[-1]
-    return basename in ("proxyjudge.php", "proxyjudge")
+    if not netloc:
+        return False
+    host = netloc.split("@", 1)[-1].split(":", 1)[0].rstrip(".")
+    for d in trusted_domains:
+        if host == d or host.endswith("." + d):
+            return True
+    return False
 
 # IPv4 oktet (0–255) + port (1–65535). Hem doğrulama hem ayıklama için.
 _OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
@@ -373,6 +400,7 @@ async def probe(
     public_ip: str,
     access_urls: list[str],
     tunnel_test: bool,
+    send_identity: bool,
 ) -> ScanResult:
     """Bir proxy'yi judge'a yönlendirerek profile et.
 
@@ -399,12 +427,11 @@ async def probe(
                 timeout=aiohttp.ClientTimeout(total=timeout),
             ) as session:
                 # X-Proxyprof-Proxy: judge'a "ben bu protokolden, bu IP:PORT'tan
-                # geliyorum" der. Sadece bizim CF-aware judge'umuz (URL'i
-                # 'proxyjudge' içerir) bunu log'a yazar; public azenv'lar
-                # header'ı yoksaymalı ama bazıları log'layabilir, gizliliği
-                # bozmamak için onlara hiç göndermiyoruz.
+                # geliyorum" der. SADECE kullanıcının trusted listesindeki
+                # domain'lerde olan judge'lara gönderilir (send_identity).
+                # Default güvenli: trusted listesi boşsa header gönderilmez.
                 extra_headers: dict[str, str] = {}
-                if _judge_accepts_proxyprof_header(judge_url):
+                if send_identity:
                     extra_headers["X-Proxyprof-Proxy"] = f"{protocol}://{proxy}"
                 async with session.get(
                     judge_url, headers=extra_headers,
@@ -737,6 +764,7 @@ async def scan(
     retries: int,
     access_urls: list[str],
     tunnel_test: bool,
+    send_identity: bool,
     table: LiveTable | None,
 ) -> list[ScanResult]:
     sem = asyncio.Semaphore(concurrency)
@@ -747,7 +775,7 @@ async def scan(
                 proxy=p, protocol=protocol, judge_url=judge_url,
                 timeout=timeout, retries=retries,
                 public_ip=public_ip, access_urls=access_urls,
-                tunnel_test=tunnel_test,
+                tunnel_test=tunnel_test, send_identity=send_identity,
             )
             if table is not None:
                 table.update(r)
@@ -798,6 +826,7 @@ def _resolve_access_test(arg: str | None) -> list[str]:
 async def amain(args: argparse.Namespace) -> int:
     proxies = read_proxies(args.file)
     access_urls = _resolve_access_test(args.access_test)
+    trusted_domains = _resolve_trusted_judge_domains(args.judge_domain)
 
     # Tek bir proxysiz HTTP session ile public IP + judge tespit. Proxy başına
     # ayrı connector açacağımız için bu session sadece bootstrap içindir.
@@ -821,6 +850,8 @@ async def amain(args: argparse.Namespace) -> int:
                 print(f"proxyprof: {e}", file=sys.stderr)
                 return 1
 
+    send_identity = _judge_accepts_proxyprof_header(judge_url, trusted_domains)
+
     if not args.silent:
         extras = []
         if access_urls:
@@ -828,6 +859,7 @@ async def amain(args: argparse.Namespace) -> int:
         extras.append(
             "tunnel-test=on" if args.tunnel_test else "tunnel-test=off"
         )
+        extras.append(f"identity={'on' if send_identity else 'off'}")
         extra = "  " + "  ".join(extras)
         print(
             f"proxyprof  protocol={args.protocol}  "
@@ -850,6 +882,7 @@ async def amain(args: argparse.Namespace) -> int:
         retries=args.retries,
         access_urls=access_urls,
         tunnel_test=args.tunnel_test,
+        send_identity=send_identity,
         table=table,
     )
     table.finish()
@@ -997,6 +1030,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "-j", "--judge", metavar="URL",
         help="Custom judge URL (azenv.php-compatible).",
+    )
+    p.add_argument(
+        "--judge-domain", metavar="DOMAIN", default=None,
+        dest="judge_domain",
+        help=(
+            "Send X-Proxyprof-Proxy identity header ONLY to judges hosted on "
+            "this domain (or its subdomains). Comma-separated for multiple "
+            f"domains. Falls back to ${_TRUSTED_JUDGE_DOMAINS_ENV} env var. "
+            "Without this flag and env var, the identity header is never "
+            "sent — so accidentally routing through a public judge does not "
+            "leak your proxy list."
+        ),
     )
     p.add_argument(
         "--access-test", nargs="?", const=ACCESS_AUTO_SENTINEL,

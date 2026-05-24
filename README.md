@@ -96,6 +96,7 @@ proxyprof <http|https|socks4|socks5> [seçenekler]
 | `--timeout` | `-T` | `5` | Proxy başına timeout (saniye). |
 | `--retries` | `-r` | `1` | Başarısız proxy başına tekrar deneme. |
 | `--judge` | `-j` | otomatik | Özel azenv.php-uyumlu judge URL'i. CF judge önerilir. |
+| `--judge-domain DOMAIN` | — | — | `X-Proxyprof-Proxy` kimlik header'ının yalnız bu domain(ler)e gönderilmesini sağlar. `$PROXYPROF_JUDGE_DOMAIN` env var'ından fallback alır. Set edilmezse header hiç gönderilmez. |
 | `--access-test [URLS]` | — | kapalı | Çoklu gatekeeper süzgeci. Değer verilmezse dahili CF-listesinden 3 rastgele site, virgüllü URL listesi verilirse o URL'ler kullanılır. |
 | `--tunnel-test` / `--no-tunnel-test` | — | **açık** | HTTP/HTTPS proxy'lerde CONNECT tünel testi. Default açık; `--no-tunnel-test` ile kapatılır. |
 | `--verbose` | `-v` | — | (Deprecated, no-op) Canlı tablo artık varsayılan. |
@@ -123,7 +124,8 @@ proxyprof http -f raw.lst --access-test https://www.cloudflare.com,https://www.g
 proxyprof http -f raw.lst --no-tunnel-test
 
 # Kendi Cloudflare-korumalı judge'ınla: ülke bilgisi + ziyaret log'u
-proxyprof http -f raw.lst -j https://yourdomain.tld/proxyjudge.php
+proxyprof http -f raw.lst -j https://yours.tld/proxyjudge.php \
+  --judge-domain yours.tld          # X-Proxyprof-Proxy header'ı buraya gider
 
 # Tamamen sessiz; başka bir script'e besleme
 proxine socks5 -s | proxyprof socks5 -s | head -20
@@ -376,9 +378,11 @@ judge ile çalışır.
 
 ```bash
 # proxine'den taze HTTP proxy → kendi CF judge'una karşı test → sadece elite +
-# CONNECT-yetkili + 3 rastgele CF gatekeeper'a geçen proxy'leri al
+# CONNECT-yetkili + 3 rastgele CF gatekeeper'a geçen proxy'leri al.
+# (PROXYPROF_JUDGE_DOMAIN bir kere export edilmişse --judge-domain gereksiz.)
 proxine http -s | proxyprof http \
   -j https://yours.tld/proxyjudge.php \
+  --judge-domain yours.tld \
   --access-test \
   -o production-ready.lst
 ```
@@ -457,20 +461,51 @@ değer — herkes bu header'ı uydurabilir. İkisinin **farklı** olması ya pro
 chain'i (proxyprof → proxy A → proxy B → judge) ya da fake-header trafiği
 demek. **Aynı** olması = direkt bağlantı, güvenilir kayıt.
 
-#### proxyprof tarafı
+#### proxyprof tarafı — kimlik gönderimi domain whitelist'i
 
-`proxyprof` `X-Proxyprof-Proxy: socks5://1.2.3.4:1080` header'ını **yalnızca**
-URL path'i `/proxyjudge.php` (ya da `/proxyjudge`) ile biten judge'lara
-gönderir. Yani:
+`X-Proxyprof-Proxy: <type>://<ip>:<port>` header'ı **yalnızca** kullanıcının
+kendi tanımladığı **güvenilir domain**'lerdeki judge'lara gönderilir. Default
+güvenli davranış: hiçbir judge'a gönderilmez.
 
-- ✅ `https://yours.tld/proxyjudge.php` → header gönderilir
-- ✅ `https://tankado.com/judge/proxyjudge.php` → header gönderilir
-- ❌ `http://httpheader.net/azenv.php` → gönderilmez (public azenv)
-- ❌ `http://proxyjudge.biz/` → gönderilmez (domain'inde geçiyor olsa da, path bizim script'imiz değil)
+Trusted domain konfigürasyonu (öncelik sırası):
 
-Bu sayede public judge'lar log'lasalar dahi proxyprof kullandığınız bilgisi
-sızmaz. Kendi judge'unuzu farklı bir isimle deploy ederseniz, `proxyjudge.php`
-olarak yeniden adlandırmanız yeterli.
+```bash
+# 1) CLI bayrağı (öncelikli)
+proxyprof http -j https://judge.tankado.com/proxyjudge.php \
+  --judge-domain tankado.com
+
+# 2) Env var (kalıcı, bir kere set edilir)
+export PROXYPROF_JUDGE_DOMAIN=tankado.com
+proxyprof http -j https://judge.tankado.com/proxyjudge.php
+
+# Birden fazla domain — virgülle:
+proxyprof http -j ... --judge-domain tankado.com,mydomain.net
+```
+
+**Match kuralı:**
+
+- `tankado.com` set → `tankado.com` ve `*.tankado.com` (her subdomain) **trusted**
+- `eviltankado.com` veya `tankado.com.evil.tld` gibi yakın isimler **DEĞİL**
+- Port önemsizdir: `tankado.com:8443` de eşleşir
+
+**Davranış matrisi:**
+
+| Senaryo | `--judge-domain` | judge URL | Header gönderilir mi? |
+|---|---|---|---|
+| Default (config yok) | — | herhangi | ❌ |
+| Trusted domain'de | `tankado.com` | `https://tankado.com/proxyjudge.php` | ✅ |
+| Trusted'ın subdomain'i | `tankado.com` | `https://judge.tankado.com/x.php` | ✅ |
+| Yakın isim ama farklı | `tankado.com` | `https://eviltankado.com/x.php` | ❌ |
+| Tamamen başka domain | `tankado.com` | `http://httpheader.net/azenv.php` | ❌ |
+
+Stderr başlığında `identity=on/off` olarak görünür — bilinçli bir konfigürasyon
+testi.
+
+Konfigüre etmediğin sürece public azenv'lara, otomatik seçilen judge'lara veya
+yanlış yere belirttiğin custom judge'a kimlik header'ı sızmaz. Path/script
+adına bakılmaz — başkasının kendi domain'ine `proxyjudge.php` deploy etmesi
+sizin kimliğinizin oraya gitmesini sağlamaz; tek belirleyici **domain
+sahipliği**dir.
 
 #### Log'u okuma
 
