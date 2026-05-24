@@ -8,3 +8,8 @@ dist/
 
 /*.lst
 STDOUT
+
+# proxyprof reputation state (SQLite + WAL/SHM dosyaları)
+*.db
+*.db-wal
+*.db-shm

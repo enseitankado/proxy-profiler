@@ -30,4 +30,7 @@ Homepage = "https://github.com/enseitankado/proxy-profiler"
 Issues = "https://github.com/enseitankado/proxy-profiler/issues"
 
 [tool.setuptools]
-py-modules = ["proxyprof", "judges"]
+py-modules = ["proxyprof", "judges", "reputation", "i18n"]
+
+[tool.setuptools.package-data]
+"*" = ["i18n/*.json"]

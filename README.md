@@ -124,6 +124,12 @@ proxyprof <http|https|socks4|socks5> [seçenekler]
 | `--silent` | `-s` | — | Yalnız stdout (proxy listesi); tüm stderr susturulur. |
 | `--verbose` | `-v` | — | (Deprecated, no-op) Canlı tablo artık varsayılan. |
 
+**misc** (yerelleştirme ve yardımcı):
+
+| Uzun | Kısa | Varsayılan | Açıklama |
+|---|---|---|---|
+| `--lang` | `-L` | sistem locale | UI dili. Mevcut: `en`, `tr`. `PROXYPROF_LANG` env değişkeni de geçerli. Detay: [Yerelleştirme](#yerelleştirme-localization). |
+
 ### Örnekler
 
 ```bash
@@ -692,6 +698,76 @@ jq 'select(.client_ip != null and .seen_ip != .client_ip)' < /var/log/proxyjudge
 
 ------------------------------------------------------------
 
+## Yerelleştirme (Localization)
+
+proxyprof'un tüm kullanıcıya yönelik metinleri (yardım ekranı, runtime
+mesajları, tablo başlıkları, CONFIG/RESULT kutuları, progress satırı) çok
+dilli destek altyapısına sahiptir. Çeviriler `i18n/` dizininde tek-dosyalık
+JSON olarak tutulur.
+
+### Dil seçimi (öncelik sırası)
+
+1. `-L tr` / `--lang tr` CLI bayrağı
+2. `PROXYPROF_LANG=tr` ortam değişkeni
+3. Sistem locale'i (`LC_ALL`, `LC_MESSAGES`, `LANG`)
+4. İngilizce (her zaman mevcut fallback)
+
+Desteklenmeyen bir dil istenirse otomatik olarak İngilizce'ye düşülür — uyarı
+mesajı verilmez.
+
+```bash
+# Türkçe arayüz
+proxyprof http -L tr -f raw.lst
+
+# Sistem locale Türkçe ise otomatik (env değişkeni gerekmez)
+LANG=tr_TR.UTF-8 proxyprof http -f raw.lst
+
+# Tek seferlik İngilizce'ye geçiş
+proxyprof http -L en -f raw.lst
+```
+
+Aktif dil tarama sonu **CONFIG** kutusunda `dil` satırında görünür.
+
+### Mevcut diller
+
+| Kod | Dil | Çeviren |
+|---|---|---|
+| `en` | English | proxyprof core team |
+| `tr` | Türkçe | Özgür Koca |
+
+### Yeni dil ekleme (contributor için)
+
+Çeviriler basit JSON'dur. Üç adımda PR atabilirsiniz:
+
+```bash
+# 1) Canonical İngilizce dosyayı kopyala
+cp i18n/en.json i18n/de.json
+
+# 2) JSON içindeki "key": "value" çiftlerinin DEĞER'ini hedef dile çevir.
+#    Anahtarlar (sol taraf) ve {placeholder}'lar AYNEN korunmalı.
+$EDITOR i18n/de.json
+
+# 3) Test et
+./proxyprof.py -L de --help
+./proxyprof.py -L de http -f /tmp/sample.lst --no-reputation
+```
+
+**Çeviri ipuçları:**
+
+- Eksik bir anahtar runtime'da otomatik olarak İngilizce'ye fallback olur.
+  Yani çeviriye yavaş yavaş başlayıp kademeli PR atılabilir.
+- `{placeholder}`'lı dizgelerde placeholder isimleri kelimesi kelimesine
+  korunmalı (örn. `{pkgs}`, `{n}`, `{elapsed:.1f}s`).
+- `meta.lang_name` alanı dili kendi alfabesinde yazın (örn. `"meta.lang_name": "Deutsch"`).
+- `meta.translator_credit` alanına kendi adınızı yazabilirsiniz — README'deki
+  "Mevcut diller" tablosuna eklenir.
+- Çok kısa kelimeler (örn. tablo başlıkları "TUN", "ACC") karakter sayısı
+  hassas — sütun genişliği otomatik ayarlanır ama makul tutmaya çalışın.
+
+PR açtıktan sonra mevcut dil setine eklenir.
+
+------------------------------------------------------------
+
 ## Mimari
 
 ```
@@ -699,6 +775,10 @@ proxy-profiler/
 ├── proxyprof.py    # Async scanner + CLI (tek dosya, ~1000 satır)
 ├── judges.py       # Judge listesi + response parser + seviye + distorting + country
 ├── reputation.py   # SQLite-tabanlı proxy reputation store + bucket sınıflandırma + probation
+├── i18n.py         # Çok dilli mesaj destek modülü (stdlib-only)
+├── i18n/
+│   ├── en.json     # Canonical English (referans)
+│   └── tr.json     # Türkçe
 ├── proxyjudge.php  # Opsiyonel CF-aware judge — kendi domain'inde host et
 ├── pyproject.toml  # aiohttp + aiohttp-socks bağımlılıkları
 └── README.md

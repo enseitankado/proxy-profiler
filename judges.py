@@ -291,7 +291,17 @@ async def pick_judge(
         except (aiohttp.ClientError, TimeoutError, OSError) as e:
             last_err = e
             continue
-    raise JudgeUnavailable(
-        f"no usable judge among {len(tuple(candidates))} candidates"
-        + (f": {last_err}" if last_err else "")
-    )
+    # i18n burada lazy import — judges.py'yi bağımsız test edenler için.
+    try:
+        from i18n import t as _t
+        n = len(tuple(candidates))
+        if last_err is not None:
+            msg = _t("input.judge_unavailable_with_err", n=n, err=last_err)
+        else:
+            msg = _t("input.judge_unavailable", n=n)
+    except ImportError:
+        msg = (
+            f"no usable judge among {len(tuple(candidates))} candidates"
+            + (f": {last_err}" if last_err else "")
+        )
+    raise JudgeUnavailable(msg)

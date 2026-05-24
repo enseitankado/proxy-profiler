@@ -29,6 +29,11 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import i18n
+# Dil tespiti _ensure_deps'ten ÖNCE yapılır ki bootstrap mesajları da
+# çevrilebilsin. --lang/-L CLI > PROXYPROF_LANG env > sistem locale > en.
+i18n.set_language(i18n.pre_parse_lang(sys.argv[1:]))
+from i18n import t  # noqa: E402
 
 # PyPI paket adı modül adından bazen farklı (aiohttp_socks → aiohttp-socks).
 _REQUIRED: tuple[tuple[str, str], ...] = (
@@ -97,7 +102,7 @@ def _bootstrap_local_venv(venv_dir: Path, packages: list[str]) -> None:
     if not venv_py.exists():
         # Önce normal (pip dahil) venv oluştur; ensurepip sistemde yoksa
         # --without-pip ile dener ve sonra get-pip.py bootstrap'lar.
-        sys.stderr.write(f"proxyprof: creating venv at {venv_dir}\n")
+        sys.stderr.write(f"proxyprof: {t('deps.creating_venv', dir=venv_dir)}\n")
         rc = subprocess.run(
             [sys.executable, "-m", "venv", str(venv_dir)],
             stderr=subprocess.DEVNULL,
@@ -108,32 +113,32 @@ def _bootstrap_local_venv(venv_dir: Path, packages: list[str]) -> None:
             ).returncode
             if rc != 0 or not venv_py.exists():
                 sys.stderr.write(
-                    "proxyprof: failed to create venv.\n"
-                    "  Install the venv module first: sudo apt install python3-venv\n"
+                    f"proxyprof: {t('deps.venv_creation_failed')}\n"
+                    f"{t('deps.venv_hint')}\n"
                 )
                 sys.exit(1)
 
     if not (venv_dir / "bin" / "pip").exists():
-        sys.stderr.write(f"proxyprof: downloading {_GET_PIP_URL}\n")
+        sys.stderr.write(f"proxyprof: {t('deps.downloading', url=_GET_PIP_URL)}\n")
         try:
             with urllib.request.urlopen(_GET_PIP_URL, timeout=30) as resp:
                 get_pip_src = resp.read()
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             sys.stderr.write(
-                f"proxyprof: failed to download get-pip.py: {e}\n"
-                "  Check your network connection and try again.\n"
+                f"proxyprof: {t('deps.download_failed', err=e)}\n"
+                f"{t('deps.download_failed_hint')}\n"
             )
             sys.exit(1)
-        sys.stderr.write("proxyprof: bootstrapping pip into venv\n")
+        sys.stderr.write(f"proxyprof: {t('deps.bootstrapping_pip')}\n")
         if subprocess.run([str(venv_py)], input=get_pip_src).returncode != 0:
-            sys.stderr.write("proxyprof: pip bootstrap failed.\n")
+            sys.stderr.write(f"proxyprof: {t('deps.pip_bootstrap_failed')}\n")
             sys.exit(1)
 
-    sys.stderr.write(f"proxyprof: installing {' '.join(packages)}\n")
+    sys.stderr.write(f"proxyprof: {t('deps.installing', pkgs=' '.join(packages))}\n")
     if subprocess.run(
         [str(venv_py), "-m", "pip", "install", "--quiet", *packages]
     ).returncode != 0:
-        sys.stderr.write("proxyprof: pip install failed.\n")
+        sys.stderr.write(f"proxyprof: {t('deps.pip_install_failed')}\n")
         sys.exit(1)
 
 
@@ -161,8 +166,8 @@ def _ensure_deps() -> None:
 
     if not (sys.stdin.isatty() and sys.stderr.isatty()):
         sys.stderr.write(
-            f"proxyprof: missing dependency: {pkg_str}\n"
-            f"Install with: {sys.executable} -m pip install {pkg_str}\n"
+            f"proxyprof: {t('deps.missing', pkgs=pkg_str)}\n"
+            f"{t('deps.install_with', cmd=f'{sys.executable} -m pip install {pkg_str}')}\n"
         )
         sys.exit(1)
 
@@ -171,17 +176,17 @@ def _ensure_deps() -> None:
     if in_venv:
         # Aktif venv'deyiz — sistem Python'unu kirletme riski yok, direkt pip.
         sys.stderr.write(
-            f"proxyprof: missing dependency: {pkg_str}\n"
-            f"  (active venv: {sys.prefix})\n"
+            f"proxyprof: {t('deps.missing', pkgs=pkg_str)}\n"
+            f"{t('deps.active_venv_note', prefix=sys.prefix)}\n"
         )
         if not _prompt(
-            f"Install with `pip install {pkg_str}`?", default_yes=True,
+            t("deps.install_prompt", pkgs=pkg_str), default_yes=True,
         ):
             sys.exit(1)
         cmd = [sys.executable, "-m", "pip", "install", "--quiet", *missing]
-        sys.stderr.write(f"proxyprof: running `{' '.join(cmd)}`\n")
+        sys.stderr.write(f"proxyprof: {t('deps.running', cmd=' '.join(cmd))}\n")
         if subprocess.run(cmd).returncode != 0:
-            sys.stderr.write("proxyprof: install failed.\n")
+            sys.stderr.write(f"proxyprof: {t('deps.install_failed')}\n")
             sys.exit(1)
         os.execv(sys.executable, [sys.executable, *sys.argv])
 
@@ -190,12 +195,11 @@ def _ensure_deps() -> None:
     # get-pip.py ile bootstrap edilir; varsa direkt kullanılır.
     venv_dir = Path(__file__).resolve().parent / ".venv"
     sys.stderr.write(
-        f"proxyprof: missing dependency: {pkg_str}\n"
-        f"  (system Python: {sys.executable})\n"
-        f"Auto-setup will create {venv_dir} and install {pkg_str} there, "
-        f"then restart proxyprof. No sudo, no system-package changes.\n"
+        f"proxyprof: {t('deps.missing', pkgs=pkg_str)}\n"
+        f"{t('deps.system_python_note', python=sys.executable)}\n"
+        f"{t('deps.auto_setup_intro', dir=venv_dir, pkgs=pkg_str)}\n"
     )
-    if not _prompt("Proceed?", default_yes=True):
+    if not _prompt(t("deps.proceed_prompt"), default_yes=True):
         sys.exit(1)
 
     _bootstrap_local_venv(venv_dir, missing)
@@ -370,20 +374,17 @@ def parse_proxies(text: str) -> list[str]:
 def read_proxies(file_arg: str | None) -> list[str]:
     if file_arg in (None, "-", "STDIN"):
         if sys.stdin.isatty():
-            sys.exit(
-                "proxyprof: no proxy input. Pipe a list via stdin "
-                "(e.g. `proxine http -s | proxyprof http`) or use `-f FILE`."
-            )
+            sys.exit(f"proxyprof: {t('input.no_input')}")
         text = sys.stdin.read()
     else:
         try:
             with open(file_arg, encoding="utf-8") as f:
                 text = f.read()
         except OSError as e:
-            sys.exit(f"proxyprof: cannot read '{file_arg}': {e}")
+            sys.exit(f"proxyprof: {t('input.cannot_read', file=file_arg, err=e)}")
     proxies = parse_proxies(text)
     if not proxies:
-        sys.exit("proxyprof: no valid IP:PORT pairs in input.")
+        sys.exit(f"proxyprof: {t('input.no_valid_pairs')}")
     return proxies
 
 
@@ -636,18 +637,21 @@ class LiveTable:
     """
 
     BAR_WIDTH = 20
-    _FIXED: dict[str, int] = {
-        "#":      5,
-        "STATUS": 6,
-        "BKT":    4,   # H/W/N/C (reputation off ise "—")
-        "PROXY":  21,
-        "LVL":    3,
-        "OUT":    15,
-        "CC":     2,
-        "TIME":   6,
-        "TUN":    3,
-        "MITM":   4,   # ✓=temiz, ×=MITM tespit edildi, —=test yok
-        "ACC":    3,
+    # Internal kod → (i18n anahtar, minimum genişlik). Genişlik runtime'da
+    # gerçek (çevrilmiş) etiketin uzunluğuyla max'lanır — örn. Türkçe'de "ÜLK"
+    # 3 char, mevcut min 2'den geniştir, sütun otomatik genişler.
+    _FIXED: dict[str, tuple[str, int]] = {
+        "#":      ("table.header.num",    5),
+        "STATUS": ("table.header.status", 6),
+        "BKT":    ("table.header.bkt",    4),
+        "PROXY":  ("table.header.proxy",  21),
+        "LVL":    ("table.header.lvl",    3),
+        "OUT":    ("table.header.out",    15),
+        "CC":     ("table.header.cc",     2),
+        "TIME":   ("table.header.time",   6),
+        "TUN":    ("table.header.tun",    3),
+        "MITM":   ("table.header.mitm",   4),
+        "ACC":    ("table.header.acc",    3),
     }
 
     # Bucket isminin tek-karakter UI temsili. Sütun dar; özet bilgi yeterli.
@@ -668,8 +672,16 @@ class LiveTable:
         self.skip_count = 0
         self._headered = False
         self._progress_drawn = False
-        self._cols = dict(self._FIXED)
-        self._cols["#"] = max(self._FIXED["#"], len(f"{total}/{total}"))
+        # Sütun adı → genişlik (etiket uzunluğunu da hesaba kat).
+        self._cols: dict[str, int] = {}
+        for code, (key, min_w) in self._FIXED.items():
+            label = t(key)
+            self._cols[code] = max(min_w, len(label))
+        self._cols["#"] = max(self._cols["#"], len(f"{total}/{total}"))
+        # Sütun adı → çevrilmiş etiket (header satırında basılır).
+        self._labels: dict[str, str] = {
+            code: t(key) for code, (key, _) in self._FIXED.items()
+        }
         self._started = time.monotonic()
 
     def _all_widths(self) -> list[int]:
@@ -692,7 +704,7 @@ class LiveTable:
         return "│" + "│".join(parts) + "│"
 
     def _emit_header(self) -> None:
-        labels = list(self._cols.keys())
+        labels = [self._labels[code] for code in self._cols.keys()]
         print(self._border("┌", "┬", "┐"), file=self.file)
         print(self._row(labels), file=self.file)
         print(self._border("├", "┼", "┤"), file=self.file)
@@ -704,13 +716,12 @@ class LiveTable:
         bar = "█" * filled + "░" * (self.BAR_WIDTH - filled)
         digits = len(str(self.total))
         elapsed = time.monotonic() - self._started
-        return (
-            f"[{bar}] {pct * 100:3.0f}%  "
-            f"{self.count:>{digits}}/{self.total}  "
-            f"ok:{self.ok_count:<4}  "
-            f"fail:{self.fail_count:<4}  "
-            f"skip:{self.skip_count:<4}  "
-            f"elapsed:{elapsed:5.1f}s"
+        return t(
+            "progress.format",
+            bar=bar, pct=pct * 100,
+            done=self.count, digits=digits, total=self.total,
+            ok=self.ok_count, fail=self.fail_count, skip=self.skip_count,
+            elapsed=elapsed,
         )
 
     def update(self, r: ScanResult) -> None:
@@ -743,9 +754,9 @@ class LiveTable:
                 or (r.tunnel_ok is False)
                 or (r.mitm_suspected is True)
             ):
-                status = "filter"
+                status = t("table.status.filter")
             else:
-                status = "ok"
+                status = t("table.status.ok")
             if r.level == 1:
                 lvl = "L1"
             elif r.level == 2:
@@ -868,46 +879,53 @@ def print_config_box(
     Parametre listesi tarama bittikten sonra okunabilir bir referans; tekrar
     çalıştırılması gerektiğinde hangi parametrelerle yapıldığını net gösterir.
     """
+    on, off, unknown = t("value.on"), t("value.off"), t("value.unknown")
     rows: list[tuple[str, str]] = [
-        ("protocol",     args.protocol),
-        ("input",        args.file or "stdin"),
-        ("output",       args.output or "stdout"),
-        ("judge",        judge_url),
-        ("publicIP",     public_ip or "unknown"),
-        ("level",        f"≤{args.level}"),
-        ("concurrency",  str(args.concurrency)),
-        ("timeout",      f"{args.timeout}s"),
-        ("retries",      str(args.retries)),
-        ("tunnel-test",  "on" if args.tunnel_test else "off"),
-        ("mitm-test",    "on" if args.mitm_test else "off"),
+        (t("row.protocol"),     args.protocol),
+        (t("row.input"),        args.file or t("value.stdin")),
+        (t("row.output"),       args.output or t("value.stdout")),
+        (t("row.judge"),        judge_url),
+        (t("row.public_ip"),    public_ip or unknown),
+        (t("row.level"),        f"≤{args.level}"),
+        (t("row.concurrency"),  str(args.concurrency)),
+        (t("row.timeout"),      t("value.elapsed_seconds", elapsed=args.timeout)),
+        (t("row.retries"),      str(args.retries)),
+        (t("row.tunnel_test"),  on if args.tunnel_test else off),
+        (t("row.mitm_test"),    on if args.mitm_test else off),
+        (t("row.lang"),         i18n.current_language()),
     ]
     if access_urls:
-        rows.append(("access-test", f"{len(access_urls)} URLs  ({', '.join(access_urls[:3])}"
-                                    + ("..." if len(access_urls) > 3 else "") + ")"))
+        samples = ", ".join(access_urls[:3]) + ("..." if len(access_urls) > 3 else "")
+        rows.append((t("row.access_test"),
+                     t("value.access_n_urls", n=len(access_urls), samples=samples)))
     else:
-        rows.append(("access-test", "off"))
+        rows.append((t("row.access_test"), off))
     # Output filtreler — sadece set edilmişse göster (kapalı default'lar
     # CONFIG kutusunu şişirmesin).
     if getattr(args, "country", None):
-        rows.append(("country-filter", args.country))
+        rows.append((t("row.country_filter"), args.country))
     if getattr(args, "exclude_distorting", False):
-        rows.append(("exclude-distorting", "on"))
-    rows.append(("identity",  "on" if send_identity else "off"))
+        rows.append((t("row.exclude_distorting"), on))
+    rows.append((t("row.identity"), on if send_identity else off))
     if reputation_enabled:
-        rows.append(("reputation", f"on  (run #{run_index}, db={args.reputation})"))
+        rows.append((t("row.reputation"),
+                     t("value.reputation_on", run=run_index, db=args.reputation)))
         if bucket_groups is not None:
             hot = len(bucket_groups.get(BUCKET_HOT, []))
             warm = len(bucket_groups.get(BUCKET_WARM, []))
             new = len(bucket_groups.get(BUCKET_NEW, []))
             cold = len(bucket_groups.get(BUCKET_COLD, []))
-            rows.append(("buckets",
-                         f"HOT {hot:,} · WARM {warm:,} · NEW {new:,} · COLD {cold:,}"))
+            rows.append((t("row.buckets"),
+                         t("value.buckets_breakdown",
+                           hot=hot, warm=warm, new=new, cold=cold)))
         if probation_skipped:
-            rows.append(("probation", f"{probation_skipped:,} COLD proxy skipped"))
-        rows.append(("cold-timeout", f"{args.cold_timeout}s"))
+            rows.append((t("row.probation"),
+                         t("value.probation_skipped", n=probation_skipped)))
+        rows.append((t("row.cold_timeout"),
+                     t("value.elapsed_seconds", elapsed=args.cold_timeout)))
     else:
-        rows.append(("reputation", "off (stateless)"))
-    _print_keyval_box("CONFIG", rows, file)
+        rows.append((t("row.reputation"), t("value.reputation_off")))
+    _print_keyval_box(t("box.title.config"), rows, file)
 
 
 def print_result_box(
@@ -934,43 +952,50 @@ def print_result_box(
     mitm_filtered = counts.get("mitm_filtered", 0)
     country_filtered = counts.get("country_filtered", 0)
     distort_filtered = counts.get("distort_filtered", 0)
-    dest = f"  →  {output_path}" if output_path else ""
+    dest = t("value.dest_arrow", path=output_path) if output_path else ""
 
-    anon_text = f"{anon} anon"
     if distorting:
-        anon_text = f"{anon} anon ({distorting} distorting)"
+        anon_text = t("value.anon_distorting", anon=anon, distorting=distorting)
+    else:
+        anon_text = t("value.anon_simple", anon=anon)
 
     rows: list[tuple[str, str]] = [
-        ("scanned", f"{scanned:,} proxies"),
-        ("good",    f"{elite} elite, {anon_text}, {trans} transparent{dest}"),
-        ("bad",     f"{bad} (timeout/error)"),
+        (t("row.scanned"), t("value.proxies", n=scanned)),
+        (t("row.good"),    t("value.good_breakdown",
+                             elite=elite, anon_text=anon_text,
+                             trans=trans, dest=dest)),
+        (t("row.bad"),     t("value.bad_count", n=bad)),
     ]
     if skipped:
-        rows.append(("skipped", f"{skipped} (IP-poison early skip)"))
+        rows.append((t("row.skipped"), t("value.skipped_count", n=skipped)))
     if blocked is not None:
-        rows.append(("blocked", f"{blocked} access denied"))
+        rows.append((t("row.blocked"), t("value.blocked_count", n=blocked)))
     if tunnel_test and tunneled is not None:
         good_total = elite + anon + trans
-        rows.append(("tunnel",  f"{tunneled} CONNECT-capable (of {good_total} good)"))
+        rows.append((t("row.tunnel"),
+                     t("value.tunnel_count", n=tunneled, good=good_total)))
     if mitm_test and (mitm or mitm_filtered):
-        rows.append(("mitm",    f"{mitm} MITM-suspected · {mitm_filtered} dropped from output"))
+        rows.append((t("row.mitm"),
+                     t("value.mitm_breakdown", n=mitm, filtered=mitm_filtered)))
     if country_filtered:
-        rows.append(("country-drop", f"{country_filtered} not in --country list"))
+        rows.append((t("row.country_drop"),
+                     t("value.country_drop_count", n=country_filtered)))
     if distort_filtered:
-        rows.append(("distort-drop", f"{distort_filtered} distorting (excluded)"))
+        rows.append((t("row.distort_drop"),
+                     t("value.distort_drop_count", n=distort_filtered)))
     if timings:
         p50 = _percentile(timings, 50)
         p95 = _percentile(timings, 95)
-        rows.append(("timing", f"p50 {p50:.1f}s · p95 {p95:.1f}s"))
+        rows.append((t("row.timing"), t("value.timing", p50=p50, p95=p95)))
     if countries:
         top = countries.most_common(5)
         country_str = " ".join(f"{c}={n}" for c, n in top)
         others = sum(countries.values()) - sum(n for _, n in top)
         if others:
-            country_str += f"  +{others} more"
-        rows.append(("country", country_str))
-    rows.append(("elapsed", f"{elapsed:.1f}s"))
-    _print_keyval_box("RESULT", rows, file)
+            country_str += t("value.country_more", n=others)
+        rows.append((t("row.country"), country_str))
+    rows.append((t("row.elapsed"), t("value.elapsed_seconds", elapsed=elapsed)))
+    _print_keyval_box(t("box.title.result"), rows, file)
 
 
 # ---------------------------------------------------------------------------
@@ -1114,10 +1139,7 @@ def _parse_access_urls(arg: str | None) -> list[str]:
         if not u:
             continue
         if not (u.startswith("http://") or u.startswith("https://")):
-            sys.exit(
-                f"proxyprof: --access-test URL '{u}' "
-                "must start with http:// or https://"
-            )
+            sys.exit(f"proxyprof: {t('input.access_url_invalid', url=u)}")
         out.append(u)
     return out
 
@@ -1139,7 +1161,12 @@ def _resolve_access_test(arg: str | None) -> list[str]:
 
 async def amain(args: argparse.Namespace) -> int:
     proxies = read_proxies(args.file)
-    access_urls = _resolve_access_test(args.access_test)
+    # --no-access-test her durumda --access-test'in üzerine yazar; AUTO da
+    # özel URL listesi de iptal edilir.
+    if args.no_access_test:
+        access_urls: list[str] = []
+    else:
+        access_urls = _resolve_access_test(args.access_test)
 
     # ---- Reputation (opt-out via --no-reputation) ------------------------
     #
@@ -1316,8 +1343,10 @@ async def amain(args: argparse.Namespace) -> int:
         try:
             out_fh = open(args.output, "w", encoding="utf-8")
         except OSError as e:
-            print(f"proxyprof: cannot open '{args.output}': {e}",
-                  file=sys.stderr)
+            print(
+                f"proxyprof: {t('misc.cannot_open_output', path=args.output, err=e)}",
+                file=sys.stderr,
+            )
             return 1
     else:
         out_fh = sys.stdout
@@ -1354,213 +1383,177 @@ async def amain(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
+    supported_langs = i18n.available_languages()
+
+    # Epilog'u t() ile kur — örnekler de çevrilebilir.
     epilog = (
-        "Examples:\n"
-        "  proxine http -s | proxyprof http                            "
-        "Pipe proxine output, keep only elite (with CONNECT tunnel test)\n"
-        "  proxyprof http -f list.lst -l 2 -o ok.lst                   "
-        "File in, elite+anon, save to file\n"
-        "  proxyprof socks5 -f - -c 1000 -T 8                          "
-        "Stdin, 1000 concurrent, 8s timeout\n"
-        "  proxyprof http -f l.lst --access-test                       "
-        "Add 3 random CF gatekeepers to the filter\n"
-        "  proxyprof http -f l.lst --access-test https://a.com,https://b.com  "
-        "Use specific gatekeepers\n"
-        "  proxyprof http -f l.lst --no-tunnel-test                    "
-        "Skip CONNECT test (faster, accepts non-tunnel proxies)\n"
-        "  proxyprof http -j https://yours.tld/proxyjudge.php          "
-        "Use your CF-protected judge (adds country info + visit logs)\n"
+        f"{t('cli.epilog_header')}\n"
+        "  proxine http -s | proxyprof http"
+        "                            "
+        f"{t('cli.example.pipe')}\n"
+        "  proxyprof http -f list.lst -l 2 -o ok.lst"
+        "                   "
+        f"{t('cli.example.file_in')}\n"
+        "  proxyprof socks5 -f - -c 1000 -T 8"
+        "                          "
+        f"{t('cli.example.stdin_socks5')}\n"
+        "  proxyprof http -f l.lst --access-test https://a.com,https://b.com"
+        "  "
+        f"{t('cli.example.access_test_custom')}\n"
+        "  proxyprof http -f l.lst --no-tunnel-test"
+        "                    "
+        f"{t('cli.example.no_tunnel')}\n"
+        "  proxyprof http -j https://yours.tld/proxyjudge.php"
+        "          "
+        f"{t('cli.example.cf_judge')}\n"
     )
     p = argparse.ArgumentParser(
         prog="proxyprof",
-        description=(
-            "Profile a list of proxies: connectivity, anonymity level "
-            "(elite / anonymous / transparent), and optional access test. "
-            "Designed to chain after `proxine`."
-        ),
+        description=t("cli.description"),
         epilog=epilog,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
         "protocol",
         choices=("http", "https", "socks4", "socks5"),
-        help="Proxy protocol of every entry in the input list.",
+        help=t("cli.help.protocol"),
     )
 
     # --- scan & probes --------------------------------------------------
     g_scan = p.add_argument_group(
-        "scan & probes",
-        "Network behaviour: concurrency, timeouts, and which probes are sent "
-        "per proxy. Probes cost extra requests; flags here affect duration.",
+        t("cli.group.scan_title"),
+        t("cli.group.scan_desc"),
     )
     g_scan.add_argument(
         "-f", "--file", metavar="FILE",
-        help="Proxy list file (default: stdin if piped). Use '-' for stdin.",
+        help=t("cli.help.file"),
     )
     g_scan.add_argument(
         "-c", "--concurrency", type=int, default=DEFAULT_CONCURRENCY,
         metavar="N",
-        help=f"Concurrent probes (default: {DEFAULT_CONCURRENCY}).",
+        help=t("cli.help.concurrency", default=DEFAULT_CONCURRENCY),
     )
     g_scan.add_argument(
         "-T", "--timeout", type=float, default=DEFAULT_TIMEOUT,
         metavar="SECONDS",
-        help=f"Per-proxy timeout (default: {DEFAULT_TIMEOUT}).",
+        help=t("cli.help.timeout", default=DEFAULT_TIMEOUT),
     )
     g_scan.add_argument(
         "-r", "--retries", type=int, default=DEFAULT_RETRIES,
         metavar="N",
-        help=f"Retries per proxy on failure (default: {DEFAULT_RETRIES}).",
+        help=t("cli.help.retries", default=DEFAULT_RETRIES),
     )
     g_scan.add_argument(
         "-j", "--judge", metavar="URL",
-        help=(
-            "Custom judge URL (azenv.php-compatible). The identity header "
-            "X-Proxyprof-Proxy is sent only to judges hosted on the hardcoded "
-            f"trusted domains: {', '.join(_TRUSTED_JUDGE_DOMAINS)}."
-        ),
+        help=t("cli.help.judge", domains=", ".join(_TRUSTED_JUDGE_DOMAINS)),
     )
     g_scan.add_argument(
         "--access-test", nargs="?", const=ACCESS_AUTO_SENTINEL,
-        default=None, metavar="URLS",
-        help=(
-            "Filter proxies by access through gatekeeper URLs. "
-            "Without value: pick "
-            f"{ACCESS_AUTO_COUNT} random sites from the built-in Cloudflare "
-            "list (every CF-protected site's /cdn-cgi/trace endpoint). "
-            "With value: comma-separated URLs; proxy must reach ALL of them. "
-            "Disabled by default."
-        ),
+        default=ACCESS_AUTO_SENTINEL, metavar="URLS",
+        help=t("cli.help.access_test", count=ACCESS_AUTO_COUNT),
+    )
+    g_scan.add_argument(
+        "--no-access-test", action="store_true", dest="no_access_test",
+        help=t("cli.help.no_access_test"),
     )
     g_scan.add_argument(
         "--tunnel-test", action=argparse.BooleanOptionalAction, default=True,
         dest="tunnel_test",
-        help=(
-            "Verify HTTPS CONNECT tunneling via "
-            f"{TUNNEL_TEST_URL}. For http/https proxies probes CONNECT "
-            "support; for SOCKS proxies (which always tunnel) is used to "
-            "trigger the MITM probe. Enabled by default; use "
-            "--no-tunnel-test to skip the HTTPS probe entirely (also "
-            "disables MITM detection)."
-        ),
+        help=t("cli.help.tunnel_test", url=TUNNEL_TEST_URL),
     )
     g_scan.add_argument(
         "--mitm-test", action=argparse.BooleanOptionalAction, default=True,
         dest="mitm_test",
-        help=(
-            "Detect proxies that intercept TLS (MITM). The HTTPS probe runs "
-            "with strict cert verification — proxies whose response fails "
-            "cert validation but successfully opened the CONNECT tunnel are "
-            "flagged as MITM-suspected and excluded from output. Requires "
-            "--tunnel-test (the same probe yields both signals); "
-            "--no-tunnel-test implicitly disables this too."
-        ),
+        help=t("cli.help.mitm_test"),
     )
     g_scan.add_argument(
         "--reputation", metavar="PATH", default=str(default_db_path()),
-        help=(
-            "SQLite reputation DB path. Tracks each proxy's history across "
-            "runs so HOT (recently-good) proxies are tested first and COLD "
-            "(repeatedly-failed) proxies enter exponential probation "
-            "(skipped 2^k runs after k consecutive failures, capped). "
-            f"Default: {default_db_path()}"
-        ),
+        help=t("cli.help.reputation", default=default_db_path()),
     )
     g_scan.add_argument(
         "--no-reputation", action="store_true",
-        help=(
-            "Disable the reputation store entirely. Tarama tamamen stateless "
-            "olur — eski (pre-2.1) davranış. Listeden hiçbir proxy önceliklendirilmez."
-        ),
+        help=t("cli.help.no_reputation"),
     )
     g_scan.add_argument(
         "--dead-threshold", type=int, default=DEFAULT_DEAD_THRESHOLD,
         metavar="N",
-        help=(
-            f"Consecutive fail count after which a proxy enters COLD bucket "
-            f"and starts exponential probation (default: {DEFAULT_DEAD_THRESHOLD})."
-        ),
+        help=t("cli.help.dead_threshold", default=DEFAULT_DEAD_THRESHOLD),
     )
     g_scan.add_argument(
         "--probation-max-skip", type=int, default=DEFAULT_PROBATION_MAX_SKIP,
         metavar="N",
-        help=(
-            "Maximum skip factor for COLD probation (default: "
-            f"{DEFAULT_PROBATION_MAX_SKIP}). At max, a dead proxy is re-tested "
-            "every N runs — never fully forgotten."
-        ),
+        help=t("cli.help.probation_max_skip", default=DEFAULT_PROBATION_MAX_SKIP),
     )
     g_scan.add_argument(
         "--cold-timeout", type=float, default=DEFAULT_COLD_TIMEOUT,
         metavar="SECONDS",
-        help=(
-            "Per-proxy timeout used ONLY for COLD bucket probes (default: "
-            f"{DEFAULT_COLD_TIMEOUT}). Shorter than --timeout because most "
-            "cold proxies will time out anyway; saves wall-clock time."
-        ),
+        help=t("cli.help.cold_timeout", default=DEFAULT_COLD_TIMEOUT),
     )
 
     # --- output filters -------------------------------------------------
     g_filter = p.add_argument_group(
-        "output filters",
-        "Post-scan filters: which good proxies make it into the final list. "
-        "No extra network cost; they just gate the output.",
+        t("cli.group.filter_title"),
+        t("cli.group.filter_desc"),
     )
     g_filter.add_argument(
         "-l", "--level", type=int, choices=(1, 2, 3),
         default=DEFAULT_LEVEL,
-        help=(
-            "Maximum anonymity level kept (1=elite only, 2=elite+anon, "
-            f"3=all). Default: {DEFAULT_LEVEL}."
-        ),
+        help=t("cli.help.level", default=DEFAULT_LEVEL),
     )
     g_filter.add_argument(
         "--country", metavar="CC[,CC...]", default=None,
-        help=(
-            "Keep only proxies from these ISO-3166-1 alpha-2 country codes "
-            "(e.g. --country TR or --country TR,US,DE). Requires a CF-aware "
-            "judge that returns PROXY_COUNTRY; public azenv judges don't "
-            "supply country, so this filter drops all proxies in that case."
-        ),
+        help=t("cli.help.country"),
     )
     g_filter.add_argument(
         "--exclude-distorting", action="store_true",
-        help=(
-            "Drop distorting proxies (anonymous proxies that inject a FAKE "
-            "public IP into X-Forwarded-For). Off by default — distorting "
-            "proxies count as Level 2 and pass --level filter normally."
-        ),
+        help=t("cli.help.exclude_distorting"),
     )
 
     # --- output destination --------------------------------------------
     g_out = p.add_argument_group(
-        "output destination",
-        "Where the filtered proxy list goes; how loud stderr is.",
+        t("cli.group.output_title"),
+        t("cli.group.output_desc"),
     )
     g_out.add_argument(
         "-o", "--output", metavar="FILE",
-        help="Write good proxies to FILE; stdout stays empty.",
+        help=t("cli.help.output"),
     )
     g_out.add_argument(
         "-v", "--verbose", action="store_true",
-        help="Deprecated, no-op (the live table is now the default).",
+        help=t("cli.help.verbose"),
     )
     g_out.add_argument(
         "-s", "--silent", action="store_true",
-        help="Only print the proxy list to stdout; suppress all stderr.",
+        help=t("cli.help.silent"),
     )
+
+    # --- misc -----------------------------------------------------------
+    g_misc = p.add_argument_group(
+        t("cli.group.misc_title"),
+        t("cli.group.misc_desc"),
+    )
+    g_misc.add_argument(
+        "-L", "--lang", metavar="CODE",
+        choices=supported_langs, default=i18n.current_language(),
+        help=t(
+            "cli.help.lang",
+            supported=", ".join(supported_langs),
+            default="en",
+        ),
+    )
+
     args = p.parse_args(argv)
 
     if args.judge and not (
         args.judge.startswith("http://") or args.judge.startswith("https://")
     ):
-        p.error("--judge must start with http:// or https://")
+        p.error(t("input.judge_must_be_http"))
     # --access-test validation _parse_access_urls içinde yapılıyor.
 
     try:
         return asyncio.run(amain(args))
     except KeyboardInterrupt:
-        print("\nproxyprof: interrupted", file=sys.stderr)
+        print(f"\nproxyprof: {t('misc.interrupted')}", file=sys.stderr)
         return 130
 
 
