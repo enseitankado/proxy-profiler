@@ -96,9 +96,9 @@ proxyprof <http|https|socks4|socks5> [seçenekler]
 | `--timeout` | `-T` | `5` | Proxy başına timeout (saniye). |
 | `--retries` | `-r` | `1` | Başarısız proxy başına tekrar deneme. |
 | `--judge` | `-j` | otomatik | Özel azenv.php-uyumlu judge URL'i. CF judge önerilir. |
-| `--access` | `-a` | — | Proxy bu URL'(ler)e erişebiliyor mu? Virgülle çoklu URL; hepsi pass etmek zorunda. |
-| `--tunnel-test` | — | kapalı | HTTP/HTTPS proxy'lerde CONNECT tüneli sınanır. |
-| `--verbose` | `-v` | — | Her proxy için satır log; progress kapatılır. |
+| `--access-test [URLS]` | — | kapalı | Çoklu gatekeeper süzgeci. Değer verilmezse dahili CF-listesinden 3 rastgele site, virgüllü URL listesi verilirse o URL'ler kullanılır. |
+| `--tunnel-test` / `--no-tunnel-test` | — | **açık** | HTTP/HTTPS proxy'lerde CONNECT tünel testi. Default açık; `--no-tunnel-test` ile kapatılır. |
+| `--verbose` | `-v` | — | (Deprecated, no-op) Canlı tablo artık varsayılan. |
 | `--silent` | `-s` | — | Yalnız stdout (proxy listesi); tüm stderr susturulur. |
 
 ### Örnekler
@@ -113,16 +113,16 @@ proxyprof http -f raw.lst -l 2 -o filtered.lst
 # SOCKS5 listesi, 1000 eşzamanlı, 8s timeout, satır satır log
 proxyprof socks5 -f socks5.lst -c 1000 -T 8 -v
 
-# Cloudflare erişim testi: proxy CF korumalı hedefe ulaşabiliyor mu?
-proxyprof http -f raw.lst -a https://example.cloudflare.com
+# Cloudflare gatekeeper süzgeci (3 random CF sitesine erişim şart)
+proxyprof http -f raw.lst --access-test
 
-# Çoklu gatekeeper: proxy hem CF'e hem Google'a ulaşıyor olsun
-proxyprof http -f raw.lst -a https://cloudflare.com,https://google.com
+# Kendi belirlediğin gatekeeper'larla
+proxyprof http -f raw.lst --access-test https://www.cloudflare.com,https://www.google.com
 
-# HTTPS tünel desteği şartı (CONNECT yetkin proxy'leri süz)
-proxyprof http -f raw.lst --tunnel-test
+# Tünel testini kapat (daha hızlı, daha az kaliteli sonuç)
+proxyprof http -f raw.lst --no-tunnel-test
 
-# Kendi Cloudflare-korumalı judge'ınla: ülke bilgisi otomatik gelir
+# Kendi Cloudflare-korumalı judge'ınla: ülke bilgisi + ziyaret log'u
 proxyprof http -f raw.lst -j https://yourdomain.tld/proxyjudge.php
 
 # Tamamen sessiz; başka bir script'e besleme
@@ -145,13 +145,38 @@ Sıralı, dedupe edilmiş, süzgeçten geçen `IP:PORT` satırları:
 
 `-o FILE` verilirse stdout boş kalır; satırlar dosyaya yazılır.
 
-### Stderr
+### Stderr — canlı sonuç tablosu
 
-Çalışma sırasında tek satırlık ilerleme:
+Tarama sırasında her test biten proxy stderr'e satır olarak akar. Sütunlar
+test edilen tüm özellikleri gösterir; sıralama tamamlanma sırasıdır (hızlı
+proxy'ler önce):
 
 ```
-[████████████░░░░░░░░]  60%  600/1000  ✓ 5.6.7.8:3128         good   142
+┌───────┬─────────┬───────────────────────┬─────┬─────────────────┬────┬────────┬─────┬─────┬─────────────────────────┐
+│ #     │ STATUS  │ PROXY                 │ LVL │ OUT             │ CC │   TIME │ TUN │ ACC │ NOTE                    │
+├───────┼─────────┼───────────────────────┼─────┼─────────────────┼────┼────────┼─────┼─────┼─────────────────────────┤
+│  1/30 │ ok      │ 8.211.194.85:4444     │ L1  │ 8.211.194.85    │ US │   1.2s │ ✓   │ ✓   │                         │
+│  2/30 │ ok      │ 5.6.7.8:1080          │ L2d │ 5.6.7.8         │ DE │   0.8s │ ✓   │ ✓   │                         │
+│  3/30 │ filter  │ 9.10.11.12:3128       │ L1  │ 9.10.11.12      │ —  │   2.1s │ ×   │ ✓   │                         │
+│  4/30 │ fail    │ 1.2.3.4:8080          │ —   │ —               │ —  │   5.0s │ —   │ —   │ TimeoutError            │
+│ ...                                                                                                                  │
+└───────┴─────────┴───────────────────────┴─────┴─────────────────┴────┴────────┴─────┴─────┴─────────────────────────┘
 ```
+
+**Sütunlar:**
+
+| Sütun | Anlamı |
+|---|---|
+| `#` | Tamamlanma sırası / toplam |
+| `STATUS` | `ok` (her şey geçti) · `filter` (judge geçti ama tunnel/access düştü) · `fail` (bağlanamadı) |
+| `PROXY` | IP:PORT |
+| `LVL` | `L1` elite · `L2` anon · `L2d` anon+distorting · `L3` transparent · `—` fail |
+| `OUT` | Judge'ın gördüğü çıkış IP'si (proxy'nin dış adresi) |
+| `CC` | ISO ülke kodu (CF judge kullanılırsa) |
+| `TIME` | Toplam test süresi |
+| `TUN` | Tunnel testi: `✓` geçti · `×` kaldı · `—` test yok |
+| `ACC` | Access testi: `✓` tüm gatekeeper'lara ulaştı · `×` en az biri fail · `—` test yok |
+| `NOTE` | Fail için kısa hata mesajı; ok satırlarında boş |
 
 Sonda özet kutusu (tüm özellikler aktif):
 
@@ -181,9 +206,8 @@ Satırların görünmesi koşula bağlı:
 
 | Komut | stdout | stderr |
 |---|---|---|
-| `proxyprof http` | süzülmüş liste | progress → özet |
-| `proxyprof http -v` | süzülmüş liste | satır log → özet |
-| `proxyprof http -o f.lst` | (boş) | progress → özet |
+| `proxyprof http` | süzülmüş liste | canlı tablo → özet kutu |
+| `proxyprof http -o f.lst` | (boş) | canlı tablo → özet kutu |
 | `proxyprof http -s` | süzülmüş liste | (boş) |
 | `proxyprof http -o f.lst -s` | (boş) | (boş) |
 
@@ -219,32 +243,33 @@ Anonimlik dışındaki üç ekstra süzgeç (`--tunnel-test`, `-a`, hız) ve iki
 metrik (timing percentiles, ülke dağılımı) — hepsi proxine boru hattının
 ötesinde ham listeyi gerçek üretim kalitesine indirgemeye yarar.
 
-### HTTPS tünel testi (`--tunnel-test`)
+### HTTPS tünel testi (default açık)
 
 **Neden:** Bir HTTP proxy düz HTTP isteklerini iletiyor olabilir ama HTTPS için
 gereken `CONNECT` komutunu desteklemiyor olabilir. Bugün neredeyse her site
 HTTPS olduğundan, CONNECT-yetkisi olmayan HTTP proxy pratik olarak çoğu hedefe
 işe yaramaz.
 
-**Ne yapar:** Her HTTP/HTTPS proxy için ek bir istek atar: `https://www.gstatic.com/generate_204`.
-204 dönerse CONNECT destekleniyor demektir. SOCKS proxy'leri doğası gereği
-tünel kurar; otomatik geçilir, ek istek yapılmaz.
+**Ne yapar:** Her HTTP/HTTPS proxy için ek bir istek atar:
+`https://www.gstatic.com/generate_204`. 204 dönerse CONNECT destekleniyor
+demektir. SOCKS proxy'leri doğası gereği tünel kurar; otomatik geçilir, ek
+istek yapılmaz.
 
 **Maliyet:** Tarama süresi yaklaşık 2 katına çıkar (HTTP/HTTPS proxy'leri için
 proxy başına 2 istek). Concurrency artırılarak telafi edilebilir.
 
-**Kullanım:**
+**Kullanım:** Default **açık**. Kapatmak için:
 
 ```bash
-proxyprof http -f raw.lst --tunnel-test -o tunneled.lst
+proxyprof http -f raw.lst --no-tunnel-test       # CONNECT testini atla
 ```
 
 **Sonuç:**
 - Stdout'a (veya `-o` dosyasına) sadece tünel testini geçen proxy'ler yazılır
+- Canlı tabloda `TUN` sütunu: `✓` / `×` / `—`
 - Özet kutuda: `tunnel │ 118 CONNECT-capable (of 197 good)`
-- Verbose log'da satır sonuna `tun` / `no-tun` etiketi düşer
 
-### Çoklu gatekeeper erişim testi (`-a`)
+### Çoklu gatekeeper erişim testi (`--access-test`)
 
 **Neden:** Bir proxy Cloudflare'i geçebilir ama Google CAPTCHA gösterebilir,
 veya tersine. "Her yerden çalışan" proxy'leri ayıklamak için tek bir gatekeeper
@@ -253,27 +278,54 @@ yeterli değil.
 **Ne yapar:** Verdiğiniz URL listesinin **hepsine** proxy üzerinden istek atar.
 Tek bir URL bile fail ederse proxy "blocked" sayılır.
 
-**Kullanım:** Virgülle ayır, hepsi `http://` veya `https://` ile başlasın:
+**Kullanım — iki mod:**
 
 ```bash
+# Otomatik: dahili CF listesinden 3 rastgele site (her tarama farklı seçim)
+proxyprof http -f raw.lst --access-test
+
+# Manuel: kendi gatekeeper'larını ver (virgülle, hepsi http(s):// ile)
 proxyprof http -f raw.lst \
-  -a https://www.cloudflare.com,https://www.google.com,https://www.wikipedia.org
+  --access-test https://www.cloudflare.com,https://www.google.com,https://www.wikipedia.org
 ```
+
+Dahili CF listesi: cloudflare.com, discord.com, reddit.com, medium.com,
+udemy.com, patreon.com, kickstarter.com, upwork.com, zendesk.com,
+shopify.com — hepsinin `/cdn-cgi/trace` endpoint'i kullanılır (her CF site'da
+mevcut, 200 döner, UA filtrelemez).
 
 **Sonuç:**
 - Sadece tüm URL'lere ulaşan proxy'ler stdout'a düşer
+- Canlı tabloda `ACC` sütunu: `✓` / `×` / `—`
 - Özet kutuda: `blocked │ 24 access denied`
 
 ### Hız metrikleri (otomatik)
 
-**Neden:** Bir proxy "çalışıyor" demek hızlı olduğu anlamına gelmez. 10 saniyede
-yanıt veren bir proxy teknik olarak iyi ama pratikte yavaş. Bir taramanın
-genel hız resmini görmeden kalite değerlendirmesi yapılamaz.
+**Neden:** Bir proxy "çalışıyor" demek hızlı olduğu anlamına gelmez. "Liste
+iyi mi?" sorusuna ortalama (`mean`) çoğu zaman yanıltıcı bir cevaptır:
+bir-iki çok yavaş proxy ortalamayı şişirir ya da çok hızlı bir proxy
+kötü dağılımı saklar. Bunun yerine **yüzdelik** (percentile) kullanılır.
 
-**Ne yapar:** Tüm başarılı sondajların yanıt sürelerinin **medyan** (p50) ve
-**%95'inci yüzdelik** (p95) değerlerini hesaplar.
+**Yüzdelik (percentile) ne demek?**
+Bir veri kümesini en küçükten büyüğe sıralarsın, "%X" değeri verinin
+**ilk %X'inin** ne kadar küçük olduğunu söyler.
+- **p50** (medyan): verinin yarısı bu değerden küçük, yarısı büyük.
+- **p95**: verinin %95'i bu değerden küçük, sadece %5'i daha yavaş — yani
+  worst-case'in eşiği.
 
-**Kullanım:** Otomatik. Hiçbir bayrak gerekmez; her tarama sonunda görünür.
+**Somut bir örnek.** Diyelim 10 proxy taradın ve süreleri (saniye):
+```
+0.4, 0.6, 0.8, 0.9, 1.1, 1.3, 1.5, 2.0, 3.5, 8.0
+```
+- Ortalama (mean) = (0.4+0.6+…+8.0)/10 = **2.01s** — ama 9 proxy'nin 9'u bu değerden hızlı! Outlier'a (8.0) yenildi.
+- Medyan (p50) = 5. ve 6. değerlerin ortası = **1.2s** — "yarısı bu kadar hızlı" gerçek tablo.
+- p95 = listenin yukarı uçuna doğru, **8.0s** — "en kötü %5'i ne kadar yavaş?"
+
+**Ne yapar:** Tarama sonunda **başarılı** sondajların (judge'a ulaşabilenlerin)
+sürelerinden p50 ve p95'i çıkarır. Fail olanlar dışarıda — zaman/dışarıda
+kalmış sayıların ortalaması anlamsız olurdu.
+
+**Kullanım:** Otomatik. Hiçbir bayrak gerekmez.
 
 **Sonuç:**
 
@@ -282,10 +334,14 @@ timing   │ p50 1.2s · p95 4.1s
 ```
 
 **Nasıl okunur:**
-- **p50 1.2s** → proxy'lerin yarısı 1.2 saniyeden hızlı (medyan latency)
-- **p95 4.1s** → proxy'lerin %95'i 4.1 saniyeden hızlı (worst-case'in alt sınırı)
-- p95 ile p50 arasındaki büyük fark "outlier'lar var" demektir
-- p95 timeout'a yakınsa (`-T 5` iken p95 4.5s gibi) liste zar zor sığıyor demektir
+- **p50 ≈ p95** (örn. p50 1.0s · p95 1.4s) → tutarlı, hızlı liste. İdeal.
+- **p95 >> p50** (örn. p50 0.8s · p95 6.2s) → çoğu hızlı ama uzun bir
+  "yavaş kuyruk" var. Üretimde bu kuyruktaki proxy'lerin timeout'a takılma
+  ihtimali yüksek.
+- **p95 ≈ timeout** (örn. `-T 5` iken p95 4.7s) → liste zar zor sığıyor;
+  `-T` değerini artırırsan büyük olasılıkla daha çok proxy "good" olur.
+- **p50 yüksek** (örn. p50 4.5s) → liste genel olarak yavaş; başka bir
+  kaynak denemeye değer.
 
 ### Geolokasyon (CF judge ile, ücretsiz)
 
@@ -320,18 +376,16 @@ judge ile çalışır.
 
 ```bash
 # proxine'den taze HTTP proxy → kendi CF judge'una karşı test → sadece elite +
-# CONNECT-yetkili + üç gatekeeper'a geçen proxy'leri al
+# CONNECT-yetkili + 3 rastgele CF gatekeeper'a geçen proxy'leri al
 proxine http -s | proxyprof http \
   -j https://yours.tld/proxyjudge.php \
-  --tunnel-test \
-  -a https://www.cloudflare.com,https://www.google.com,https://www.wikipedia.org \
-  -l 1 \
+  --access-test \
   -o production-ready.lst
 ```
 
-Bu komut size production'a koymadan önce her açıdan elenmiş bir proxy listesi
-verir: elite anonimlik + HTTPS tüneli + 3 farklı gatekeeper'a erişim + ülke
-dağılımı raporu.
+Bu komut production'a koymadan önce her açıdan elenmiş bir proxy listesi
+verir: elite anonimlik (default `-l 1`) + HTTPS tüneli (default `--tunnel-test`)
++ 3 farklı CF gatekeeper'a erişim + ülke dağılımı raporu.
 
 ------------------------------------------------------------
 
@@ -405,14 +459,18 @@ demek. **Aynı** olması = direkt bağlantı, güvenilir kayıt.
 
 #### proxyprof tarafı
 
-`proxyprof` her judge isteğinde otomatik olarak şu header'ı ekler:
+`proxyprof` `X-Proxyprof-Proxy: socks5://1.2.3.4:1080` header'ını **yalnızca**
+URL path'i `/proxyjudge.php` (ya da `/proxyjudge`) ile biten judge'lara
+gönderir. Yani:
 
-```
-X-Proxyprof-Proxy: socks5://1.2.3.4:1080
-```
+- ✅ `https://yours.tld/proxyjudge.php` → header gönderilir
+- ✅ `https://tankado.com/judge/proxyjudge.php` → header gönderilir
+- ❌ `http://httpheader.net/azenv.php` → gönderilmez (public azenv)
+- ❌ `http://proxyjudge.biz/` → gönderilmez (domain'inde geçiyor olsa da, path bizim script'imiz değil)
 
-Public azenv'lar bu header'ı yok sayar (zararsız); senin `proxyjudge.php`'in
-ise yakalayıp log'a yazar. Ek bayrak gerekmez.
+Bu sayede public judge'lar log'lasalar dahi proxyprof kullandığınız bilgisi
+sızmaz. Kendi judge'unuzu farklı bir isimle deploy ederseniz, `proxyjudge.php`
+olarak yeniden adlandırmanız yeterli.
 
 #### Log'u okuma
 

@@ -15,12 +15,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import random
 import re
+import shutil
 import statistics
 import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import Counter
 from dataclasses import dataclass, field
@@ -231,6 +234,45 @@ USER_AGENT = (
 # proxy'lerde anlamlı bir sınav.
 TUNNEL_TEST_URL = "https://www.gstatic.com/generate_204"
 
+# `--access-test` bayrağı değer almadan kullanılırsa bu listeden rastgele 3 URL
+# seçilir. Hepsi /cdn-cgi/trace endpoint'i — her Cloudflare-korumalı sitede
+# mevcuttur, 200 döner, UA filtresi uygulamaz, ~200B body sıfır cost'a yakın.
+# Birden fazla farklı CF zone'una karşı test etmek "her CF sitede çalışıyor"
+# güvencesi verir.
+CF_GATEKEEPERS: tuple[str, ...] = (
+    "https://www.cloudflare.com/cdn-cgi/trace",
+    "https://www.discord.com/cdn-cgi/trace",
+    "https://www.reddit.com/cdn-cgi/trace",
+    "https://www.medium.com/cdn-cgi/trace",
+    "https://www.udemy.com/cdn-cgi/trace",
+    "https://www.patreon.com/cdn-cgi/trace",
+    "https://www.kickstarter.com/cdn-cgi/trace",
+    "https://www.upwork.com/cdn-cgi/trace",
+    "https://www.zendesk.com/cdn-cgi/trace",
+    "https://www.shopify.com/cdn-cgi/trace",
+)
+ACCESS_AUTO_COUNT = 3
+ACCESS_AUTO_SENTINEL = "AUTO"
+
+
+def _judge_accepts_proxyprof_header(url: str) -> bool:
+    """Judge URL'i bizim CF-aware judge'umuz mu? Sadece o zaman
+    `X-Proxyprof-Proxy` gönderilir.
+
+    Detection: URL path'inin SON SEGMENTI 'proxyjudge.php' veya 'proxyjudge'
+    (case-insensitive). Domain adında 'proxyjudge' geçen public servisler
+    (örn. proxyjudge.biz, proxyjudge.us) bu testten geçmez — onlar
+    azenv.php benzeri public judge'lardır, header sızıntısı istenmez.
+
+    Kullanıcı kendi judge'unu farklı bir isimle deploy ederse bu kontrol
+    fail eder; script'i 'proxyjudge.php' olarak adlandırmak yeterli."""
+    try:
+        path = urllib.parse.urlparse(url).path.lower()
+    except (ValueError, AttributeError):
+        return False
+    basename = path.rsplit("/", 1)[-1]
+    return basename in ("proxyjudge.php", "proxyjudge")
+
 # IPv4 oktet (0–255) + port (1–65535). Hem doğrulama hem ayıklama için.
 _OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
 IP_PORT_RE = re.compile(rf"\b({_OCTET}(?:\.{_OCTET}){{3}}):([1-9]\d{{0,4}})\b")
@@ -357,12 +399,15 @@ async def probe(
                 timeout=aiohttp.ClientTimeout(total=timeout),
             ) as session:
                 # X-Proxyprof-Proxy: judge'a "ben bu protokolden, bu IP:PORT'tan
-                # geliyorum" der. Judge bunu CF-Connecting-IP ile birlikte log'a
-                # yazabilir; bilmeyen judge'lar (public azenv'lar) header'ı
-                # sessizce yok sayar.
+                # geliyorum" der. Sadece bizim CF-aware judge'umuz (URL'i
+                # 'proxyjudge' içerir) bunu log'a yazar; public azenv'lar
+                # header'ı yoksaymalı ama bazıları log'layabilir, gizliliği
+                # bozmamak için onlara hiç göndermiyoruz.
+                extra_headers: dict[str, str] = {}
+                if _judge_accepts_proxyprof_header(judge_url):
+                    extra_headers["X-Proxyprof-Proxy"] = f"{protocol}://{proxy}"
                 async with session.get(
-                    judge_url,
-                    headers={"X-Proxyprof-Proxy": f"{protocol}://{proxy}"},
+                    judge_url, headers=extra_headers,
                 ) as resp:
                     body = await resp.text(errors="replace")
 
@@ -468,42 +513,133 @@ async def _tunnel_check(
 # UI
 # ---------------------------------------------------------------------------
 
-class Progress:
-    """Tek satır TTY ilerleme göstergesi, proxine ile aynı estetik (\\r)."""
+class LiveTable:
+    """Tarama sırasında her sonuç satır olarak akan canlı tablo.
 
-    BAR_WIDTH = 20
-    LINE_WIDTH = 100
+    Sütunlar: #, STATUS, PROXY, LVL, OUT, CC, TIME, TUN, ACC, NOTE.
+    - LVL: L1 / L2 / L2d (distorting) / L3 / —
+    - TUN/ACC: ✓ (geçti) / × (kaldı) / — (test yok)
+    - NOTE: fail için hata mesajı; satır sığacak kadar truncate edilir.
+
+    Append-only render (ANSI imleç manipülasyonu YOK). asyncio.gather sonuçları
+    tamamlanma sırasıyla geldiğinden satırlar test sırasında doğal olarak
+    "en hızlı önce" sıralanır. `#` sütunu tamamlanma sırasıdır, input
+    indeksi değildir.
+    """
+
+    # Sabit genişlikli sütunlar. NOTE sütunu terminal genişliğine göre kalanı alır.
+    _FIXED: dict[str, int] = {
+        "#":      5,   # "999/9999" gibi; total>9999 ise auto-genişlemez
+        "STATUS": 7,
+        "PROXY":  21,  # 255.255.255.255:65535 = 21
+        "LVL":    3,
+        "OUT":    15,
+        "CC":     2,
+        "TIME":   6,
+        "TUN":    3,
+        "ACC":    3,
+    }
+    _MIN_NOTE = 12
 
     def __init__(self, enabled: bool, total: int, file=sys.stderr) -> None:
         self.file = file
-        self.enabled = enabled and file.isatty()
+        self.enabled = enabled
         self.total = total
-        self.done = 0
-        self.good = 0
+        self.count = 0
+        self._headered = False
+        self._cols = dict(self._FIXED)
+        # # sütunu total'a göre genişlesin: "1000/1000" = 9 chars
+        self._cols["#"] = max(self._FIXED["#"], len(f"{total}/{total}"))
+        self._term_width = self._detect_width()
 
-    def update(self, result: ScanResult) -> None:
-        self.done += 1
-        if result.ok:
-            self.good += 1
+    @staticmethod
+    def _detect_width() -> int:
+        try:
+            return shutil.get_terminal_size((120, 24)).columns
+        except OSError:
+            return 120
+
+    def _note_width(self) -> int:
+        fixed_sum = sum(self._cols.values())
+        # Her sütun arasında "│" + 2 boşluk = 3 char; başta ve sonda da bir │.
+        seps = (len(self._cols) + 1) * 3 + 1
+        return max(self._MIN_NOTE, self._term_width - fixed_sum - seps - 1)
+
+    def _all_widths(self) -> list[int]:
+        return list(self._cols.values()) + [self._note_width()]
+
+    def _border(self, left: str, mid: str, right: str) -> str:
+        return left + mid.join("─" * (w + 2) for w in self._all_widths()) + right
+
+    def _row(self, cells: list[str]) -> str:
+        widths = self._all_widths()
+        parts = []
+        for c, w in zip(cells, widths):
+            s = c if len(c) <= w else c[: w - 1] + "…"
+            # Sayısal sütunlar sağa, geri kalan sola yaslı
+            if w == self._cols["TIME"] or (w == self._cols["#"] and c and c[0].isdigit()):
+                parts.append(f" {s:>{w}} ")
+            else:
+                parts.append(f" {s:<{w}} ")
+        return "│" + "│".join(parts) + "│"
+
+    def _emit_header(self) -> None:
+        labels = list(self._cols.keys()) + ["NOTE"]
+        print(self._border("┌", "┬", "┐"), file=self.file)
+        print(self._row(labels), file=self.file)
+        print(self._border("├", "┼", "┤"), file=self.file)
+        self.file.flush()
+
+    def update(self, r: ScanResult) -> None:
+        self.count += 1
         if not self.enabled:
             return
-        pct = self.done / self.total if self.total else 1.0
-        filled = int(self.BAR_WIDTH * pct)
-        bar = "█" * filled + "░" * (self.BAR_WIDTH - filled)
-        marker = "✓" if result.ok else "x"
-        digits = len(str(self.total))
-        line = (
-            f"\r[{bar}] {pct * 100:3.0f}%  "
-            f"{self.done:>{digits}}/{self.total}  "
-            f"{marker} {result.proxy:<21}  "
-            f"good {self.good:>5}"
-        )
-        self.file.write(line[: self.LINE_WIDTH].ljust(self.LINE_WIDTH))
+        if not self._headered:
+            self._emit_header()
+            self._headered = True
+
+        # STATUS belirleme: judge'ı geçti ama ek testler düştü → "filter"
+        if not r.ok:
+            status = "fail"
+        elif (r.access_ok is False) or (r.tunnel_ok is False):
+            status = "filter"
+        else:
+            status = "ok"
+
+        if not r.ok:
+            lvl = "—"
+        elif r.level == 1:
+            lvl = "L1"
+        elif r.level == 2:
+            lvl = "L2d" if r.distorting else "L2"
+        elif r.level == 3:
+            lvl = "L3"
+        else:
+            lvl = "—"
+
+        def _mark(v: bool | None) -> str:
+            if v is None:
+                return "—"
+            return "✓" if v else "×"
+
+        cells = [
+            f"{self.count}/{self.total}",
+            status,
+            r.proxy,
+            lvl,
+            r.outbound_ip or "—",
+            r.country or "—",
+            f"{r.elapsed:.1f}s",
+            _mark(r.tunnel_ok),
+            _mark(r.access_ok),
+            (r.error or "") if not r.ok else "",
+        ]
+        print(self._row(cells), file=self.file)
         self.file.flush()
 
     def finish(self) -> None:
-        if self.enabled:
-            self.file.write("\r" + " " * self.LINE_WIDTH + "\r")
+        if self.enabled and self._headered:
+            print(self._border("└", "┴", "┘"), file=self.file)
             self.file.flush()
 
 
@@ -601,9 +737,7 @@ async def scan(
     retries: int,
     access_urls: list[str],
     tunnel_test: bool,
-    progress: Progress | None,
-    verbose: bool,
-    log_file,
+    table: LiveTable | None,
 ) -> list[ScanResult]:
     sem = asyncio.Semaphore(concurrency)
 
@@ -615,33 +749,8 @@ async def scan(
                 public_ip=public_ip, access_urls=access_urls,
                 tunnel_test=tunnel_test,
             )
-            if verbose:
-                if r.ok:
-                    tag = f"L{r.level}" + ("d" if r.distorting else "")
-                    extras = []
-                    if r.country:
-                        extras.append(r.country)
-                    if r.tunnel_ok is True:
-                        extras.append("tun")
-                    elif r.tunnel_ok is False:
-                        extras.append("no-tun")
-                    if r.access_ok is False:
-                        extras.append("blocked")
-                    extra_str = " ".join(extras)
-                    print(
-                        f"[ ok ]  {tag:<3} {r.proxy:<21}  "
-                        f"{r.elapsed:>5.1f}s  out={r.outbound_ip or '-':<15} "
-                        f"{extra_str}",
-                        file=log_file,
-                    )
-                else:
-                    print(
-                        f"[fail]       {r.proxy:<21}  "
-                        f"{r.error or 'unknown error'}",
-                        file=log_file,
-                    )
-            elif progress is not None:
-                progress.update(r)
+            if table is not None:
+                table.update(r)
             return r
 
     return await asyncio.gather(*(worker(p) for p in proxies))
@@ -664,15 +773,31 @@ def _parse_access_urls(arg: str | None) -> list[str]:
             continue
         if not (u.startswith("http://") or u.startswith("https://")):
             sys.exit(
-                f"proxyprof: --access URL '{u}' must start with http:// or https://"
+                f"proxyprof: --access-test URL '{u}' "
+                "must start with http:// or https://"
             )
         out.append(u)
     return out
 
 
+def _resolve_access_test(arg: str | None) -> list[str]:
+    """args.access_test → URL listesi.
+
+    None        → boş liste (test yok)
+    "AUTO"      → CF_GATEKEEPERS'tan rastgele 3 site
+    "url1,url2" → kullanıcı verdiği URL'ler (validate edilir)
+    """
+    if arg is None:
+        return []
+    if arg == ACCESS_AUTO_SENTINEL:
+        k = min(ACCESS_AUTO_COUNT, len(CF_GATEKEEPERS))
+        return random.sample(CF_GATEKEEPERS, k=k)
+    return _parse_access_urls(arg)
+
+
 async def amain(args: argparse.Namespace) -> int:
     proxies = read_proxies(args.file)
-    access_urls = _parse_access_urls(args.access)
+    access_urls = _resolve_access_test(args.access_test)
 
     # Tek bir proxysiz HTTP session ile public IP + judge tespit. Proxy başına
     # ayrı connector açacağımız için bu session sadece bootstrap içindir.
@@ -700,9 +825,10 @@ async def amain(args: argparse.Namespace) -> int:
         extras = []
         if access_urls:
             extras.append(f"access={len(access_urls)}")
-        if args.tunnel_test:
-            extras.append("tunnel-test=on")
-        extra = ("  " + "  ".join(extras)) if extras else ""
+        extras.append(
+            "tunnel-test=on" if args.tunnel_test else "tunnel-test=off"
+        )
+        extra = "  " + "  ".join(extras)
         print(
             f"proxyprof  protocol={args.protocol}  "
             f"proxies={len(proxies):,}  judge={judge_url}  "
@@ -711,10 +837,7 @@ async def amain(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
-    progress = Progress(
-        enabled=not args.silent and not args.verbose,
-        total=len(proxies),
-    )
+    table = LiveTable(enabled=not args.silent, total=len(proxies))
 
     started = time.monotonic()
     results = await scan(
@@ -727,11 +850,9 @@ async def amain(args: argparse.Namespace) -> int:
         retries=args.retries,
         access_urls=access_urls,
         tunnel_test=args.tunnel_test,
-        progress=progress,
-        verbose=args.verbose and not args.silent,
-        log_file=sys.stderr,
+        table=table,
     )
-    progress.finish()
+    table.finish()
     elapsed = time.monotonic() - started
 
     # Sayım: counts[1..3] iyi proxy seviye dağılımı (filtre öncesi gerçek).
@@ -812,18 +933,20 @@ async def amain(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     epilog = (
         "Examples:\n"
-        "  proxine http -s | proxyprof http                           "
-        "Pipe proxine output, keep only elite\n"
-        "  proxyprof http -f list.lst -l 2 -o ok.lst                  "
+        "  proxine http -s | proxyprof http                            "
+        "Pipe proxine output, keep only elite (with CONNECT tunnel test)\n"
+        "  proxyprof http -f list.lst -l 2 -o ok.lst                   "
         "File in, elite+anon, save to file\n"
-        "  proxyprof socks5 -f - -c 1000 -T 8 -v                      "
-        "Stdin, 1000 concurrent, 8s timeout, verbose log\n"
-        "  proxyprof http -f l.lst -a https://a.com,https://b.com     "
-        "Filter against multiple gatekeepers\n"
-        "  proxyprof http -f l.lst --tunnel-test                      "
-        "Additionally require HTTPS CONNECT capability\n"
-        "  proxyprof http -j https://yours.tld/proxyjudge.php         "
-        "Use your CF-protected judge (adds country info)\n"
+        "  proxyprof socks5 -f - -c 1000 -T 8                          "
+        "Stdin, 1000 concurrent, 8s timeout\n"
+        "  proxyprof http -f l.lst --access-test                       "
+        "Add 3 random CF gatekeepers to the filter\n"
+        "  proxyprof http -f l.lst --access-test https://a.com,https://b.com  "
+        "Use specific gatekeepers\n"
+        "  proxyprof http -f l.lst --no-tunnel-test                    "
+        "Skip CONNECT test (faster, accepts non-tunnel proxies)\n"
+        "  proxyprof http -j https://yours.tld/proxyjudge.php          "
+        "Use your CF-protected judge (adds country info + visit logs)\n"
     )
     p = argparse.ArgumentParser(
         prog="proxyprof",
@@ -876,25 +999,30 @@ def main(argv: list[str] | None = None) -> int:
         help="Custom judge URL (azenv.php-compatible).",
     )
     p.add_argument(
-        "-a", "--access", metavar="URLS",
+        "--access-test", nargs="?", const=ACCESS_AUTO_SENTINEL,
+        default=None, metavar="URLS",
         help=(
-            "Also verify the proxy can reach these URLs (comma-separated; "
-            "the proxy must reach ALL of them to count as good). Useful for "
-            "filtering against multiple gatekeepers (e.g. a Cloudflare site "
-            "+ a Google service)."
+            "Filter proxies by access through gatekeeper URLs. "
+            "Without value: pick "
+            f"{ACCESS_AUTO_COUNT} random sites from the built-in Cloudflare "
+            "list (every CF-protected site's /cdn-cgi/trace endpoint). "
+            "With value: comma-separated URLs; proxy must reach ALL of them. "
+            "Disabled by default."
         ),
     )
     p.add_argument(
-        "--tunnel-test", action="store_true", dest="tunnel_test",
+        "--tunnel-test", action=argparse.BooleanOptionalAction, default=True,
+        dest="tunnel_test",
         help=(
-            "For http/https proxies, additionally verify HTTPS CONNECT tunneling "
-            f"works ({TUNNEL_TEST_URL} must return 204). SOCKS proxies always "
-            "tunnel so the check is skipped. Roughly doubles request count."
+            "For http/https proxies, verify HTTPS CONNECT tunneling works "
+            f"({TUNNEL_TEST_URL} must return 204). SOCKS proxies are "
+            "skipped (always tunnel). Enabled by default; "
+            "use --no-tunnel-test to skip and roughly halve request count."
         ),
     )
     p.add_argument(
         "-v", "--verbose", action="store_true",
-        help="Log every probe to stderr; disables progress bar.",
+        help="Deprecated, no-op (the live table is now the default).",
     )
     p.add_argument(
         "-s", "--silent", action="store_true",
@@ -906,10 +1034,7 @@ def main(argv: list[str] | None = None) -> int:
         args.judge.startswith("http://") or args.judge.startswith("https://")
     ):
         p.error("--judge must start with http:// or https://")
-    # --access validation _parse_access_urls içinde yapılıyor (multi-URL).
-
-    if args.silent:
-        args.verbose = False
+    # --access-test validation _parse_access_urls içinde yapılıyor.
 
     try:
         return asyncio.run(amain(args))
