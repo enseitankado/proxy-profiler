@@ -64,39 +64,36 @@ def _normalise(code: str) -> str:
 
 
 def detect_system_language() -> str:
-    """Env + locale tabanlı dil tespiti. Desteklenmiyorsa İngilizce.
+    """POSIX env > locale modülü tabanlı dil tespiti.
 
-    Sıra:
-        1. `PROXYPROF_LANG`
-        2. `LC_ALL` / `LC_MESSAGES` / `LANG` (locale fonksiyonları üzerinden)
-        3. `locale.getdefaultlocale()`
-        4. Doğrudan `LANG` env (POSIX fallback)
-        5. `_DEFAULT_LANG`
+    Python'un `locale.getlocale()`'i bazı kurulumlarda `LANG` env'iyle
+    tutarsız sonuçlar verir (örn. `LANG=tr_TR.UTF-8` ortamda `en_US` döner —
+    Pardus/Debian'da gözlemlendi). Bu yüzden env değişkenleri locale
+    fonksiyonlarından ÖNCE okunur — POSIX standart önceliği:
+
+        PROXYPROF_LANG > LC_ALL > LC_MESSAGES > LANG > locale.getlocale()
+
+    Desteklenmeyen dil → `_DEFAULT_LANG`.
     """
     candidates: list[str] = []
-    env = os.environ.get(_ENV_VAR)
-    if env:
-        candidates.append(env)
+    for var in (_ENV_VAR, "LC_ALL", "LC_MESSAGES", "LANG"):
+        v = os.environ.get(var)
+        if v:
+            candidates.append(v)
     try:
         loc = _locale.getlocale()[0]
     except (TypeError, ValueError):
         loc = None
     if loc:
         candidates.append(loc)
-    if not loc:
-        try:
-            loc = _locale.getdefaultlocale()[0]
-        except (TypeError, ValueError):
-            loc = None
-        if loc:
-            candidates.append(loc)
-    raw_lang = os.environ.get("LANG")
-    if raw_lang:
-        candidates.append(raw_lang)
 
     supported = set(available_languages())
     for c in candidates:
         code = _normalise(c)
+        # POSIX `C` / `POSIX` locale'leri "İngilizce yok" demek değil; explicit
+        # locale ayarı olmadığını gösterir. Bunları skip et, sıradakine bak.
+        if code in ("c", "posix", ""):
+            continue
         if code in supported:
             return code
     return _DEFAULT_LANG
