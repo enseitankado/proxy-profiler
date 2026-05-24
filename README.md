@@ -95,8 +95,7 @@ proxyprof <http|https|socks4|socks5> [seçenekler]
 | `--concurrency` | `-c` | `500` | Eşzamanlı sonda sayısı. |
 | `--timeout` | `-T` | `5` | Proxy başına timeout (saniye). |
 | `--retries` | `-r` | `1` | Başarısız proxy başına tekrar deneme. |
-| `--judge` | `-j` | otomatik | Özel azenv.php-uyumlu judge URL'i. CF judge önerilir. |
-| `--judge-domain DOMAIN` | — | — | `X-Proxyprof-Proxy` kimlik header'ının yalnız bu domain(ler)e gönderilmesini sağlar. `$PROXYPROF_JUDGE_DOMAIN` env var'ından fallback alır. Set edilmezse header hiç gönderilmez. |
+| `--judge` | `-j` | otomatik | Özel azenv.php-uyumlu judge URL'i. CF judge önerilir. Kimlik header'ı yalnız hardcoded güvenilir domain'lere gider — bkz. *Cloudflare-aware judge*. |
 | `--access-test [URLS]` | — | kapalı | Çoklu gatekeeper süzgeci. Değer verilmezse dahili CF-listesinden 3 rastgele site, virgüllü URL listesi verilirse o URL'ler kullanılır. |
 | `--tunnel-test` / `--no-tunnel-test` | — | **açık** | HTTP/HTTPS proxy'lerde CONNECT tünel testi. Default açık; `--no-tunnel-test` ile kapatılır. |
 | `--verbose` | `-v` | — | (Deprecated, no-op) Canlı tablo artık varsayılan. |
@@ -147,48 +146,74 @@ Sıralı, dedupe edilmiş, süzgeçten geçen `IP:PORT` satırları:
 
 `-o FILE` verilirse stdout boş kalır; satırlar dosyaya yazılır.
 
-### Stderr — canlı sonuç tablosu
+### Stderr — canlı tablo + progress + CONFIG/RESULT kutuları
 
-Tarama sırasında her test biten proxy stderr'e satır olarak akar. Sütunlar
-test edilen tüm özellikleri gösterir; sıralama tamamlanma sırasıdır (hızlı
-proxy'ler önce):
+Tarama akarken stderr şu yapıdadır:
 
 ```
-┌───────┬─────────┬───────────────────────┬─────┬─────────────────┬────┬────────┬─────┬─────┬─────────────────────────┐
-│ #     │ STATUS  │ PROXY                 │ LVL │ OUT             │ CC │   TIME │ TUN │ ACC │ NOTE                    │
-├───────┼─────────┼───────────────────────┼─────┼─────────────────┼────┼────────┼─────┼─────┼─────────────────────────┤
-│  1/30 │ ok      │ 8.211.194.85:4444     │ L1  │ 8.211.194.85    │ US │   1.2s │ ✓   │ ✓   │                         │
-│  2/30 │ ok      │ 5.6.7.8:1080          │ L2d │ 5.6.7.8         │ DE │   0.8s │ ✓   │ ✓   │                         │
-│  3/30 │ filter  │ 9.10.11.12:3128       │ L1  │ 9.10.11.12      │ —  │   2.1s │ ×   │ ✓   │                         │
-│  4/30 │ fail    │ 1.2.3.4:8080          │ —   │ —               │ —  │   5.0s │ —   │ —   │ TimeoutError            │
-│ ...                                                                                                                  │
-└───────┴─────────┴───────────────────────┴─────┴─────────────────┴────┴────────┴─────┴─────┴─────────────────────────┘
+┌───────┬────────┬───────────────────────┬─────┬─────────────────┬────┬────────┬─────┬─────┐
+│     # │ STATUS │ PROXY                 │ LVL │ OUT             │ CC │   TIME │ TUN │ ACC │
+├───────┼────────┼───────────────────────┼─────┼─────────────────┼────┼────────┼─────┼─────┤
+│  3/30 │ ok     │ 8.211.194.85:4444     │ L1  │ 8.211.194.85    │ US │   1.2s │ ✓   │ ✓   │
+│  7/30 │ ok     │ 5.6.7.8:1080          │ L2d │ 5.6.7.8         │ DE │   0.8s │ ✓   │ ✓   │
+│ 12/30 │ filter │ 9.10.11.12:3128       │ L1  │ 9.10.11.12      │ —  │   2.1s │ ×   │ ✓   │
+└───────┴────────┴───────────────────────┴─────┴─────────────────┴────┴────────┴─────┴─────┘
+[████████████████░░░░]  80%  24/30  ok:3     fail:21    elapsed:  9.4s
 ```
+
+**Tablo davranışı:**
+
+- Yalnız **başarılı** proxy'ler tabloda satır olur. Fail'ler görünmez ama
+  progress satırındaki `fail:N` sayımı artar — gürültüyü tablodan ayırır.
+- Satırlar tamamlanma sırasıyla gelir (en hızlı önce; `#` bu sırayı, total ise
+  toplam hedefi gösterir → `3/30`, `7/30` arada atlamalar fail'lerin yerini
+  belli eder).
+- En alt satır canlı progress: tamamlanan / toplam, ok / fail sayımları,
+  elapsed. ANSI cursor manipülasyonu ile yerinde güncellenir; pipe ortamında
+  (stderr TTY değilken) sadece final progress yazılır.
 
 **Sütunlar:**
 
 | Sütun | Anlamı |
 |---|---|
 | `#` | Tamamlanma sırası / toplam |
-| `STATUS` | `ok` (her şey geçti) · `filter` (judge geçti ama tunnel/access düştü) · `fail` (bağlanamadı) |
+| `STATUS` | `ok` (her şey geçti) · `filter` (judge geçti, tunnel/access düştü) |
 | `PROXY` | IP:PORT |
-| `LVL` | `L1` elite · `L2` anon · `L2d` anon+distorting · `L3` transparent · `—` fail |
+| `LVL` | `L1` elite · `L2` anon · `L2d` anon+distorting · `L3` transparent |
 | `OUT` | Judge'ın gördüğü çıkış IP'si (proxy'nin dış adresi) |
 | `CC` | ISO ülke kodu (CF judge kullanılırsa) |
 | `TIME` | Toplam test süresi |
 | `TUN` | Tunnel testi: `✓` geçti · `×` kaldı · `—` test yok |
 | `ACC` | Access testi: `✓` tüm gatekeeper'lara ulaştı · `×` en az biri fail · `—` test yok |
-| `NOTE` | Fail için kısa hata mesajı; ok satırlarında boş |
 
-Sonda özet kutusu (tüm özellikler aktif):
+**Tarama bittikten sonra** progress'in altında iki kutu sırayla yazılır.
+
+**CONFIG** — tarama parametrelerinin key=value referansı (aynı taramayı
+tekrarlamak için tüm bayraklar görünür):
 
 ```
-┌──────────┬───────────────────────────────────────────────────────────┐
-│ protocol │ http                                                      │
-│ judge    │ https://yours.tld/proxyjudge.php                          │
-│ publicIP │ 78.180.x.x                                                │
+┌ CONFIG ─────┬──────────────────────────────────────────────┐
+│ protocol    │ http                                         │
+│ input       │ raw.lst                                      │
+│ output      │ working.lst                                  │
+│ judge       │ https://tankado.com/proxyjudge.php           │
+│ publicIP    │ 78.180.x.x                                   │
+│ level       │ ≤1                                           │
+│ concurrency │ 500                                          │
+│ timeout     │ 5.0s                                         │
+│ retries     │ 1                                            │
+│ tunnel-test │ on                                           │
+│ access-test │ 3 URLs  (https://www.cloudflare.com/...)     │
+│ identity    │ on                                           │
+└─────────────┴──────────────────────────────────────────────┘
+```
+
+**RESULT** — tarama sonuçlarının özeti:
+
+```
+┌ RESULT ──┬───────────────────────────────────────────────────────────┐
 │ scanned  │ 1,000 proxies                                             │
-│ good     │ 142 elite, 38 anon (10 distorting), 17 transparent  →  out.lst│
+│ good     │ 142 elite, 38 anon (10 distorting), 17 transparent  →  working.lst│
 │ bad      │ 803 (timeout/error)                                       │
 │ blocked  │ 24 access denied                                          │
 │ tunnel   │ 118 CONNECT-capable (of 197 good)                         │
@@ -198,11 +223,11 @@ Sonda özet kutusu (tüm özellikler aktif):
 └──────────┴───────────────────────────────────────────────────────────┘
 ```
 
-Satırların görünmesi koşula bağlı:
-- `blocked` → `-a` verildiyse
-- `tunnel` → `--tunnel-test` aktifse
+RESULT'taki bazı satırlar koşullu:
+- `blocked` → `--access-test` verildiyse
+- `tunnel` → `--tunnel-test` aktifse (default açık)
 - `country` → judge `PROXY_COUNTRY` / `CF-IPCountry` döndürüyorsa (yani CF judge kullanılıyorsa)
-- `distorting` → en az 1 distorting proxy yakalandıysa
+- `(N distorting)` → en az 1 distorting proxy yakalandıysa
 
 ### Çıktı modu tablosu
 
@@ -461,51 +486,49 @@ değer — herkes bu header'ı uydurabilir. İkisinin **farklı** olması ya pro
 chain'i (proxyprof → proxy A → proxy B → judge) ya da fake-header trafiği
 demek. **Aynı** olması = direkt bağlantı, güvenilir kayıt.
 
-#### proxyprof tarafı — kimlik gönderimi domain whitelist'i
+#### proxyprof tarafı — kimlik gönderimi hardcoded domain whitelist
 
-`X-Proxyprof-Proxy: <type>://<ip>:<port>` header'ı **yalnızca** kullanıcının
-kendi tanımladığı **güvenilir domain**'lerdeki judge'lara gönderilir. Default
-güvenli davranış: hiçbir judge'a gönderilmez.
+`X-Proxyprof-Proxy: <type>://<ip>:<port>` header'ı **yalnızca** kodda
+sabitlenmiş güvenilir domain'lerdeki judge'lara gönderilir. CLI bayrağı veya
+env var yok — yanlış kullanım fiziksel olarak imkânsız.
 
-Trusted domain konfigürasyonu (öncelik sırası):
+Güvenilir domain listesi `proxyprof.py` içinde `_TRUSTED_JUDGE_DOMAINS`
+sabitidir:
 
-```bash
-# 1) CLI bayrağı (öncelikli)
-proxyprof http -j https://judge.tankado.com/proxyjudge.php \
-  --judge-domain tankado.com
+```python
+_TRUSTED_JUDGE_DOMAINS: tuple[str, ...] = (
+    "tankado.com",
+)
+```
 
-# 2) Env var (kalıcı, bir kere set edilir)
-export PROXYPROF_JUDGE_DOMAIN=tankado.com
-proxyprof http -j https://judge.tankado.com/proxyjudge.php
+Repoyu kendi judge'unuz için fork ederseniz tek satırlık değişiklik:
 
-# Birden fazla domain — virgülle:
-proxyprof http -j ... --judge-domain tankado.com,mydomain.net
+```python
+_TRUSTED_JUDGE_DOMAINS = ("mydomain.net", "altdomain.com")
 ```
 
 **Match kuralı:**
 
-- `tankado.com` set → `tankado.com` ve `*.tankado.com` (her subdomain) **trusted**
-- `eviltankado.com` veya `tankado.com.evil.tld` gibi yakın isimler **DEĞİL**
+- `tankado.com` → `tankado.com` ve `*.tankado.com` (her subdomain) **trusted**
+- `eviltankado.com` ya da `tankado.com.evil.tld` gibi yakın isimler **DEĞİL**
 - Port önemsizdir: `tankado.com:8443` de eşleşir
 
-**Davranış matrisi:**
+**Davranış matrisi (sabit `tankado.com` ile):**
 
-| Senaryo | `--judge-domain` | judge URL | Header gönderilir mi? |
-|---|---|---|---|
-| Default (config yok) | — | herhangi | ❌ |
-| Trusted domain'de | `tankado.com` | `https://tankado.com/proxyjudge.php` | ✅ |
-| Trusted'ın subdomain'i | `tankado.com` | `https://judge.tankado.com/x.php` | ✅ |
-| Yakın isim ama farklı | `tankado.com` | `https://eviltankado.com/x.php` | ❌ |
-| Tamamen başka domain | `tankado.com` | `http://httpheader.net/azenv.php` | ❌ |
+| judge URL | Header gönderilir mi? |
+|---|---|
+| `https://tankado.com/proxyjudge.php` | ✅ |
+| `https://judge.tankado.com/anything` | ✅ (subdomain) |
+| `https://tankado.com:8443/p.php` | ✅ (port önemsiz) |
+| `https://eviltankado.com/x` | ❌ (yakın isim, farklı domain) |
+| `http://httpheader.net/azenv.php` | ❌ (public judge) |
+| `http://proxyjudge.biz/` | ❌ (alakasız) |
 
-Stderr başlığında `identity=on/off` olarak görünür — bilinçli bir konfigürasyon
-testi.
-
-Konfigüre etmediğin sürece public azenv'lara, otomatik seçilen judge'lara veya
-yanlış yere belirttiğin custom judge'a kimlik header'ı sızmaz. Path/script
-adına bakılmaz — başkasının kendi domain'ine `proxyjudge.php` deploy etmesi
-sizin kimliğinizin oraya gitmesini sağlamaz; tek belirleyici **domain
-sahipliği**dir.
+Tarama sonu CONFIG kutusunda `identity = on/off` olarak görünür. Public
+azenv'lara, otomatik seçilen judge'lara veya yanlış yere belirttiğin custom
+judge'a kimlik header'ı sızmaz. Path/script adına bakılmaz — başkasının kendi
+domain'ine `proxyjudge.php` deploy etmesi sizin kimliğinizin oraya gitmesini
+sağlamaz; tek belirleyici **domain sahipliği**dir.
 
 #### Log'u okuma
 

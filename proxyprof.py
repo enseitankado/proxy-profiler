@@ -255,39 +255,22 @@ ACCESS_AUTO_COUNT = 3
 ACCESS_AUTO_SENTINEL = "AUTO"
 
 
-_TRUSTED_JUDGE_DOMAINS_ENV = "PROXYPROF_JUDGE_DOMAIN"
+# X-Proxyprof-Proxy header'ının gönderileceği SABİT domain listesi. Hardcoded;
+# CLI/env override DESTEKLENMEZ — yanlışlıkla başka bir judge'a kimlik
+# sızdırma riskini fiziksel olarak imkânsız kılar. Bu repoyu fork edenler
+# kendi domain'lerini buraya ekleyebilir.
+_TRUSTED_JUDGE_DOMAINS: tuple[str, ...] = (
+    "tankado.com",
+)
 
 
-def _resolve_trusted_judge_domains(cli_arg: str | None) -> list[str]:
-    """X-Proxyprof-Proxy header'ının gönderileceği güvenilir domain listesi.
+def _judge_accepts_proxyprof_header(url: str) -> bool:
+    """Judge URL'inin domain'i hardcoded güvenilir listede mi?
 
-    Öncelik: CLI `--judge-domain` > env `PROXYPROF_JUDGE_DOMAIN` > boş liste.
-    Virgülle birden çok domain. Boş liste → header asla gönderilmez (güvenli
-    default; kullanıcı bilinçli olarak kendi judge domain'ini belirtmeli)."""
-    raw = cli_arg or os.environ.get(_TRUSTED_JUDGE_DOMAINS_ENV) or ""
-    out: list[str] = []
-    for piece in raw.split(","):
-        d = piece.strip().lower().strip(".")
-        if d:
-            out.append(d)
-    return out
-
-
-def _judge_accepts_proxyprof_header(
-    url: str, trusted_domains: list[str],
-) -> bool:
-    """Judge URL'inin domain'i kullanıcının güvenilir listesinde mi?
-
-    Match: `netloc == d` veya `netloc.endswith('.' + d)` (subdomain).
-    Port varsa stripped: 'tankado.com:8080' → 'tankado.com'.
-    Liste boşsa daima False — yani default davranışı "header gönderme"dir.
-
-    Bu kontrol path/script adına BAKMAZ. Domain sahipliği güveni belirler:
-    başkasının kendi domain'ine proxyjudge.php deploy etmesi senin
-    kimliğinin oraya sızmasını sağlamaz.
+    Match: `host == d` veya `host.endswith('.' + d)` (subdomain). Port
+    önemsizdir. Domain sahipliği güveni belirler — başkasının kendi
+    domain'ine proxyjudge.php deploy etmesi yine de header alamaz.
     """
-    if not trusted_domains:
-        return False
     try:
         netloc = urllib.parse.urlparse(url).netloc.lower()
     except (ValueError, AttributeError):
@@ -295,7 +278,7 @@ def _judge_accepts_proxyprof_header(
     if not netloc:
         return False
     host = netloc.split("@", 1)[-1].split(":", 1)[0].rstrip(".")
-    for d in trusted_domains:
+    for d in _TRUSTED_JUDGE_DOMAINS:
         if host == d or host.endswith("." + d):
             return True
     return False
@@ -541,24 +524,31 @@ async def _tunnel_check(
 # ---------------------------------------------------------------------------
 
 class LiveTable:
-    """Tarama sırasında her sonuç satır olarak akan canlı tablo.
+    """Tarama sırasında her **başarılı** sonuç satır olarak akan canlı tablo
+    + en alt satırda canlı progress.
 
-    Sütunlar: #, STATUS, PROXY, LVL, OUT, CC, TIME, TUN, ACC, NOTE.
-    - LVL: L1 / L2 / L2d (distorting) / L3 / —
-    - TUN/ACC: ✓ (geçti) / × (kaldı) / — (test yok)
-    - NOTE: fail için hata mesajı; satır sığacak kadar truncate edilir.
+    Sütunlar (sadece OK satırlar): #, STATUS, PROXY, LVL, OUT, CC, TIME, TUN, ACC.
+    Fail satırlar tabloda görünmez; sayım progress satırında tutulur.
 
-    Append-only render (ANSI imleç manipülasyonu YOK). asyncio.gather sonuçları
-    tamamlanma sırasıyla geldiğinden satırlar test sırasında doğal olarak
-    "en hızlı önce" sıralanır. `#` sütunu tamamlanma sırasıdır, input
-    indeksi değildir.
+    Render düzeni:
+      ┌─ header ─┐
+      │  row 1   │   ← OK proxy
+      │  row 2   │
+      │   ...    │
+      └──────────┘
+      [████░░] 60%  18/30  ok:6 fail:12 elapsed:5.2s   ← canlı, ANSI ile refresh
+
+    Tarama bitince:
+      - en alt progress satırı temizlenir
+      - tablo bottom border yazılır
+      - final progress satırı statik olarak bir kez daha yazılır
     """
 
-    # Sabit genişlikli sütunlar. NOTE sütunu terminal genişliğine göre kalanı alır.
+    BAR_WIDTH = 20
     _FIXED: dict[str, int] = {
-        "#":      5,   # "999/9999" gibi; total>9999 ise auto-genişlemez
-        "STATUS": 7,
-        "PROXY":  21,  # 255.255.255.255:65535 = 21
+        "#":      5,
+        "STATUS": 6,
+        "PROXY":  21,
         "LVL":    3,
         "OUT":    15,
         "CC":     2,
@@ -566,34 +556,25 @@ class LiveTable:
         "TUN":    3,
         "ACC":    3,
     }
-    _MIN_NOTE = 12
 
     def __init__(self, enabled: bool, total: int, file=sys.stderr) -> None:
         self.file = file
         self.enabled = enabled
+        # ANSI cursor manipülasyonu yalnız TTY'de güvenli; pipe/file'a yazarken
+        # progress satırını çizmeyiz (sadece header + OK rows + final summary).
+        self.use_ansi = enabled and file.isatty()
         self.total = total
         self.count = 0
+        self.ok_count = 0
+        self.fail_count = 0
         self._headered = False
+        self._progress_drawn = False
         self._cols = dict(self._FIXED)
-        # # sütunu total'a göre genişlesin: "1000/1000" = 9 chars
         self._cols["#"] = max(self._FIXED["#"], len(f"{total}/{total}"))
-        self._term_width = self._detect_width()
-
-    @staticmethod
-    def _detect_width() -> int:
-        try:
-            return shutil.get_terminal_size((120, 24)).columns
-        except OSError:
-            return 120
-
-    def _note_width(self) -> int:
-        fixed_sum = sum(self._cols.values())
-        # Her sütun arasında "│" + 2 boşluk = 3 char; başta ve sonda da bir │.
-        seps = (len(self._cols) + 1) * 3 + 1
-        return max(self._MIN_NOTE, self._term_width - fixed_sum - seps - 1)
+        self._started = time.monotonic()
 
     def _all_widths(self) -> list[int]:
-        return list(self._cols.values()) + [self._note_width()]
+        return list(self._cols.values())
 
     def _border(self, left: str, mid: str, right: str) -> str:
         return left + mid.join("─" * (w + 2) for w in self._all_widths()) + right
@@ -601,73 +582,108 @@ class LiveTable:
     def _row(self, cells: list[str]) -> str:
         widths = self._all_widths()
         parts = []
-        for c, w in zip(cells, widths):
+        for i, (c, w) in enumerate(zip(cells, widths)):
             s = c if len(c) <= w else c[: w - 1] + "…"
-            # Sayısal sütunlar sağa, geri kalan sola yaslı
-            if w == self._cols["TIME"] or (w == self._cols["#"] and c and c[0].isdigit()):
+            # # ve TIME sağa yaslı, geri kalanlar sola
+            col_name = list(self._cols.keys())[i]
+            if col_name in ("#", "TIME"):
                 parts.append(f" {s:>{w}} ")
             else:
                 parts.append(f" {s:<{w}} ")
         return "│" + "│".join(parts) + "│"
 
     def _emit_header(self) -> None:
-        labels = list(self._cols.keys()) + ["NOTE"]
+        labels = list(self._cols.keys())
         print(self._border("┌", "┬", "┐"), file=self.file)
         print(self._row(labels), file=self.file)
         print(self._border("├", "┼", "┤"), file=self.file)
         self.file.flush()
 
+    def _progress_line(self) -> str:
+        pct = self.count / self.total if self.total else 1.0
+        filled = int(self.BAR_WIDTH * pct)
+        bar = "█" * filled + "░" * (self.BAR_WIDTH - filled)
+        digits = len(str(self.total))
+        elapsed = time.monotonic() - self._started
+        return (
+            f"[{bar}] {pct * 100:3.0f}%  "
+            f"{self.count:>{digits}}/{self.total}  "
+            f"ok:{self.ok_count:<4}  "
+            f"fail:{self.fail_count:<4}  "
+            f"elapsed:{elapsed:5.1f}s"
+        )
+
     def update(self, r: ScanResult) -> None:
         self.count += 1
+        if r.ok:
+            self.ok_count += 1
+        else:
+            self.fail_count += 1
+
         if not self.enabled:
             return
         if not self._headered:
             self._emit_header()
             self._headered = True
 
-        # STATUS belirleme: judge'ı geçti ama ek testler düştü → "filter"
-        if not r.ok:
-            status = "fail"
-        elif (r.access_ok is False) or (r.tunnel_ok is False):
-            status = "filter"
-        else:
-            status = "ok"
+        # Mevcut progress satırını temizle (varsa) — sadece TTY'de.
+        if self.use_ansi and self._progress_drawn:
+            self.file.write("\r\033[K")
 
-        if not r.ok:
-            lvl = "—"
-        elif r.level == 1:
-            lvl = "L1"
-        elif r.level == 2:
-            lvl = "L2d" if r.distorting else "L2"
-        elif r.level == 3:
-            lvl = "L3"
-        else:
-            lvl = "—"
+        # Sadece OK satırlarını tabloya ekle. Fail'ler sayıma katıldı ama
+        # tablo gürültüsünü artırmasın.
+        if r.ok:
+            # STATUS sütunu: judge'ı geçti ama tunnel/access düştüyse "filter"
+            if (r.access_ok is False) or (r.tunnel_ok is False):
+                status = "filter"
+            else:
+                status = "ok"
+            if r.level == 1:
+                lvl = "L1"
+            elif r.level == 2:
+                lvl = "L2d" if r.distorting else "L2"
+            elif r.level == 3:
+                lvl = "L3"
+            else:
+                lvl = "—"
 
-        def _mark(v: bool | None) -> str:
-            if v is None:
-                return "—"
-            return "✓" if v else "×"
+            def _mark(v: bool | None) -> str:
+                if v is None:
+                    return "—"
+                return "✓" if v else "×"
 
-        cells = [
-            f"{self.count}/{self.total}",
-            status,
-            r.proxy,
-            lvl,
-            r.outbound_ip or "—",
-            r.country or "—",
-            f"{r.elapsed:.1f}s",
-            _mark(r.tunnel_ok),
-            _mark(r.access_ok),
-            (r.error or "") if not r.ok else "",
-        ]
-        print(self._row(cells), file=self.file)
+            cells = [
+                f"{self.count}/{self.total}",
+                status,
+                r.proxy,
+                lvl,
+                r.outbound_ip or "—",
+                r.country or "—",
+                f"{r.elapsed:.1f}s",
+                _mark(r.tunnel_ok),
+                _mark(r.access_ok),
+            ]
+            self.file.write(self._row(cells) + "\n")
+
+        # Progress satırını en altta yeniden çiz (TTY varsa).
+        if self.use_ansi:
+            self.file.write(self._progress_line())
+            self._progress_drawn = True
+
         self.file.flush()
 
     def finish(self) -> None:
-        if self.enabled and self._headered:
-            print(self._border("└", "┴", "┘"), file=self.file)
-            self.file.flush()
+        if not self.enabled:
+            return
+        # Canlı progress satırını temizle.
+        if self.use_ansi and self._progress_drawn:
+            self.file.write("\r\033[K")
+        # Tablo varsa bottom border'ı kapat.
+        if self._headered:
+            self.file.write(self._border("└", "┴", "┘") + "\n")
+        # Statik final progress satırı (her zaman, TTY olsun olmasın).
+        self.file.write(self._progress_line() + "\n")
+        self.file.flush()
 
 
 def _percentile(data: list[float], p: float) -> float:
@@ -683,10 +699,75 @@ def _percentile(data: list[float], p: float) -> float:
     return sorted_data[f] + (sorted_data[c] - sorted_data[f]) * (k - f)
 
 
-def print_summary_box(
-    protocol: str,
-    judge: str,
+def _print_keyval_box(
+    title: str, rows: list[tuple[str, str]], file,
+) -> None:
+    """Generic etiketli kutu yazıcı. CONFIG ve RESULT için ortak.
+
+    Başlık sol kutucuğa gömülür; üst ve alt sınır `┬`/`┴` ile aynı yerde
+    bölünür:
+       ┌ TITLE ──────┬─────────────┐
+       │ key         │ value       │
+       └─────────────┴─────────────┘
+    """
+    if not rows:
+        return
+    w_key = max(len(k) for k, _ in rows)
+    w_val = max(len(v) for _, v in rows)
+    key_box_width = w_key + 2   # " key " (padding hem solda hem sağda)
+    val_box_width = w_val + 2
+
+    title_text = f" {title} "
+    if len(title_text) <= key_box_width:
+        title_seg = title_text + "─" * (key_box_width - len(title_text))
+    else:
+        # Başlık key kutucuğuna sığmıyor — kısalt.
+        title_seg = f" {title[: key_box_width - 3]}…"[:key_box_width]
+
+    print("┌" + title_seg + "┬" + "─" * val_box_width + "┐", file=file)
+    for k, v in rows:
+        print(f"│ {k:<{w_key}} │ {v:<{w_val}} │", file=file)
+    print(
+        "└" + "─" * key_box_width + "┴" + "─" * val_box_width + "┘",
+        file=file,
+    )
+
+
+def print_config_box(
+    args: argparse.Namespace,
+    judge_url: str,
     public_ip: str,
+    access_urls: list[str],
+    send_identity: bool,
+    file=sys.stderr,
+) -> None:
+    """Taramanın TÜM ayarlarını key=value olarak göster.
+
+    Parametre listesi tarama bittikten sonra okunabilir bir referans; tekrar
+    çalıştırılması gerektiğinde hangi parametrelerle yapıldığını net gösterir.
+    """
+    rows: list[tuple[str, str]] = [
+        ("protocol",     args.protocol),
+        ("input",        args.file or "stdin"),
+        ("output",       args.output or "stdout"),
+        ("judge",        judge_url),
+        ("publicIP",     public_ip or "unknown"),
+        ("level",        f"≤{args.level}"),
+        ("concurrency",  str(args.concurrency)),
+        ("timeout",      f"{args.timeout}s"),
+        ("retries",      str(args.retries)),
+        ("tunnel-test",  "on" if args.tunnel_test else "off"),
+    ]
+    if access_urls:
+        rows.append(("access-test", f"{len(access_urls)} URLs  ({', '.join(access_urls[:3])}"
+                                    + ("..." if len(access_urls) > 3 else "") + ")"))
+    else:
+        rows.append(("access-test", "off"))
+    rows.append(("identity",  "on" if send_identity else "off"))
+    _print_keyval_box("CONFIG", rows, file)
+
+
+def print_result_box(
     scanned: int,
     counts: dict,
     timings: list[float],
@@ -696,7 +777,7 @@ def print_summary_box(
     tunnel_test: bool,
     file=sys.stderr,
 ) -> None:
-    """proxine'in summary kutusuyla aynı görsel dili kullan."""
+    """Tarama sonuçları — sayım, dağılım, hız, ülke, süre."""
     elite = counts.get(1, 0)
     anon = counts.get(2, 0)
     trans = counts.get(3, 0)
@@ -710,18 +791,16 @@ def print_summary_box(
     if distorting:
         anon_text = f"{anon} anon ({distorting} distorting)"
 
-    rows = [
-        ("protocol", protocol),
-        ("judge",    judge),
-        ("publicIP", public_ip or "unknown"),
-        ("scanned",  f"{scanned:,} proxies"),
-        ("good",     f"{elite} elite, {anon_text}, {trans} transparent{dest}"),
-        ("bad",      f"{bad} (timeout/error)"),
+    rows: list[tuple[str, str]] = [
+        ("scanned", f"{scanned:,} proxies"),
+        ("good",    f"{elite} elite, {anon_text}, {trans} transparent{dest}"),
+        ("bad",     f"{bad} (timeout/error)"),
     ]
     if blocked is not None:
         rows.append(("blocked", f"{blocked} access denied"))
     if tunnel_test and tunneled is not None:
-        rows.append(("tunnel",  f"{tunneled} CONNECT-capable (of {elite + anon + trans} good)"))
+        good_total = elite + anon + trans
+        rows.append(("tunnel",  f"{tunneled} CONNECT-capable (of {good_total} good)"))
     if timings:
         p50 = _percentile(timings, 50)
         p95 = _percentile(timings, 95)
@@ -734,20 +813,7 @@ def print_summary_box(
             country_str += f"  +{others} more"
         rows.append(("country", country_str))
     rows.append(("elapsed", f"{elapsed:.1f}s"))
-
-    w_key = max(len(k) for k, _ in rows)
-    w_val = max(len(v) for _, v in rows)
-
-    def line(left: str, mid: str, right: str) -> str:
-        return left + "─" * (w_key + 2) + mid + "─" * (w_val + 2) + right
-
-    def row(k: str, v: str) -> str:
-        return f"│ {k:<{w_key}} │ {v:<{w_val}} │"
-
-    print(line("┌", "┬", "┐"), file=file)
-    for k, v in rows:
-        print(row(k, v), file=file)
-    print(line("└", "┴", "┘"), file=file)
+    _print_keyval_box("RESULT", rows, file)
 
 
 # ---------------------------------------------------------------------------
@@ -826,7 +892,6 @@ def _resolve_access_test(arg: str | None) -> list[str]:
 async def amain(args: argparse.Namespace) -> int:
     proxies = read_proxies(args.file)
     access_urls = _resolve_access_test(args.access_test)
-    trusted_domains = _resolve_trusted_judge_domains(args.judge_domain)
 
     # Tek bir proxysiz HTTP session ile public IP + judge tespit. Proxy başına
     # ayrı connector açacağımız için bu session sadece bootstrap içindir.
@@ -850,25 +915,9 @@ async def amain(args: argparse.Namespace) -> int:
                 print(f"proxyprof: {e}", file=sys.stderr)
                 return 1
 
-    send_identity = _judge_accepts_proxyprof_header(judge_url, trusted_domains)
+    send_identity = _judge_accepts_proxyprof_header(judge_url)
 
-    if not args.silent:
-        extras = []
-        if access_urls:
-            extras.append(f"access={len(access_urls)}")
-        extras.append(
-            "tunnel-test=on" if args.tunnel_test else "tunnel-test=off"
-        )
-        extras.append(f"identity={'on' if send_identity else 'off'}")
-        extra = "  " + "  ".join(extras)
-        print(
-            f"proxyprof  protocol={args.protocol}  "
-            f"proxies={len(proxies):,}  judge={judge_url}  "
-            f"public_ip={public_ip or 'unknown'}  "
-            f"concurrency={args.concurrency}  level≤{args.level}{extra}",
-            file=sys.stderr,
-        )
-
+    # Üst başlık satırı YOK — tüm parametre özetlemesi sondaki CONFIG kutusunda.
     table = LiveTable(enabled=not args.silent, total=len(proxies))
 
     started = time.monotonic()
@@ -943,10 +992,14 @@ async def amain(args: argparse.Namespace) -> int:
             summary_counts.pop("blocked", None)
         if not args.tunnel_test:
             summary_counts.pop("tunneled", None)
-        print_summary_box(
-            protocol=args.protocol,
-            judge=judge_url,
+        print_config_box(
+            args=args,
+            judge_url=judge_url,
             public_ip=public_ip,
+            access_urls=access_urls,
+            send_identity=send_identity,
+        )
+        print_result_box(
             scanned=len(results),
             counts=summary_counts,
             timings=timings,
@@ -1029,18 +1082,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument(
         "-j", "--judge", metavar="URL",
-        help="Custom judge URL (azenv.php-compatible).",
-    )
-    p.add_argument(
-        "--judge-domain", metavar="DOMAIN", default=None,
-        dest="judge_domain",
         help=(
-            "Send X-Proxyprof-Proxy identity header ONLY to judges hosted on "
-            "this domain (or its subdomains). Comma-separated for multiple "
-            f"domains. Falls back to ${_TRUSTED_JUDGE_DOMAINS_ENV} env var. "
-            "Without this flag and env var, the identity header is never "
-            "sent — so accidentally routing through a public judge does not "
-            "leak your proxy list."
+            "Custom judge URL (azenv.php-compatible). The identity header "
+            "X-Proxyprof-Proxy is sent only to judges hosted on the hardcoded "
+            f"trusted domains: {', '.join(_TRUSTED_JUDGE_DOMAINS)}."
         ),
     )
     p.add_argument(
