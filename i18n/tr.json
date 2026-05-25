@@ -22,6 +22,10 @@
   "deps.venv_creation_failed": "venv oluşturulamadı.",
   "deps.venv_hint": "  Önce venv modülünü kurun: sudo apt install python3-venv",
 
+  "bootstrap.reading": "girdi okunuyor...",
+  "bootstrap.loading_reputation": "{n:,} proxy için reputation durumu yükleniyor...",
+  "bootstrap.preparing": "gerçek IP ve judge tespit ediliyor (ilk birkaç sn sürebilir)...",
+
   "input.no_input": "proxy girdisi yok. Stdin üzerinden bir liste boruyla geçirin (örn. `proxine http -s | proxyprof http`) veya `-f DOSYA` kullanın.",
   "input.cannot_read": "'{file}' okunamıyor: {err}",
   "input.no_valid_pairs": "girdide geçerli IP:PORT çifti yok.",
@@ -74,7 +78,7 @@
 
   "table.header.num": "#",
   "table.header.status": "DURUM",
-  "table.header.bkt": "KOVA",
+  "table.header.bkt": "ÖNCELİK",
   "table.header.proxy": "PROXY",
   "table.header.lvl": "SEVİYE",
   "table.header.out": "ÇIKIŞ",
@@ -94,7 +98,7 @@
   "table.bucket.cold": "SOĞUK",
 
   "progress.format": "[{bar}] {pct:3.0f}%  {done:>{digits}}/{total}  iyi:{ok:<4}  hata:{fail:<4}  atlanan:{skip:<4}  süre:{elapsed:5.1f}s",
-  "progress.legend": "  L1   Elite — IP ve proxy varlığı tamamen gizli; en yüksek anonimlik.\n  L2   Anonim — IP gizli ama Via/X-Forwarded-* header'ı proxy varlığını sızdırır.\n  L2d  Distorting — L2 + X-Forwarded-For'a SAHTE public IP enjekte eder (fingerprint kaçırma).\n  L3   Transparan — gerçek IP header'larda yansır; anonimlik yok, yalnız routing.\n  ✓ ×  TÜNEL / MITM YOK / ERİŞİM sütunlarında ✓ = sütun başlığı doğrulandı (iyi sonuç), × = doğrulanmadı.\n        Örn. MITM YOK ✓ → proxy TLS'i bozmuyor; MITM YOK × → MITM imzası bulundu, proxy TLS chain'i kırıyor.\n  —    Veri yok: test çalışmadı ya da judge yanıt vermedi.",
+  "progress.legend": "  SEVİYE\n    L1   Elite        IP ve proxy varlığı tamamen gizli; en yüksek anonimlik.\n    L2   Anonim       IP gizli ama Via/X-Forwarded-* header'ı proxy varlığını sızdırır.\n    L2d  Distorting   L2 + X-Forwarded-For'a SAHTE public IP enjekte eder (fingerprint kaçırma).\n    L3   Transparan   gerçek IP header'larda yansır; anonimlik yok, yalnız routing.\n\n  SÜTUNLAR (✓ = iyi sonuç)\n    TÜNEL       HTTPS CONNECT tüneli kurulabiliyor (HTTP-only proxy çoğu siteye yaramaz).\n    MITM YOK    proxy TLS'i bozmuyor, araya girme yok. HTTPS güvende.\n    ERİŞİM      ✓ test edilen tüm sitelere bağlanabildi; aksi halde 3 char kod:\n                403/503/429 = HTTP yasak/challenge; to = timeout; err = bağlantı koptu; ? = diğer.",
   "progress.label_elapsed": "süre",
   "progress.label_ok": "iyi",
   "progress.label_fail": "hata",

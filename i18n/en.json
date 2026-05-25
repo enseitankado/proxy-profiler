@@ -22,6 +22,10 @@
   "deps.venv_creation_failed": "failed to create venv.",
   "deps.venv_hint": "  Install the venv module first: sudo apt install python3-venv",
 
+  "bootstrap.reading": "reading input...",
+  "bootstrap.loading_reputation": "loading reputation state for {n:,} proxies...",
+  "bootstrap.preparing": "detecting public IP and picking judge (first few seconds)...",
+
   "input.no_input": "no proxy input. Pipe a list via stdin (e.g. `proxine http -s | proxyprof http`) or use `-f FILE`.",
   "input.cannot_read": "cannot read '{file}': {err}",
   "input.no_valid_pairs": "no valid IP:PORT pairs in input.",
@@ -94,7 +98,7 @@
   "table.bucket.cold": "COLD",
 
   "progress.format": "[{bar}] {pct:3.0f}%  {done:>{digits}}/{total}  ok:{ok:<4}  fail:{fail:<4}  skip:{skip:<4}  elapsed:{elapsed:5.1f}s",
-  "progress.legend": "  L1   Elite — your IP and proxy presence are fully hidden; the strongest anonymity.\n  L2   Anonymous — IP is hidden but Via/X-Forwarded-* headers reveal a proxy is in use.\n  L2d  Distorting — L2 plus injects a FAKE public IP into X-Forwarded-For (fingerprint trick).\n  L3   Transparent — your real IP appears in headers; no anonymity, just routing.\n  ✓ ×  In TUNNEL / MITM / ACCESS columns, ✓ = the desirable outcome, × = the bad one.\n        E.g. MITM ✓ → proxy is clean (no TLS interception); MITM × → MITM signature found, proxy is rewriting the TLS chain.\n  —    No data: probe didn't run or judge didn't respond.",
+  "progress.legend": "  LEVEL\n    L1   Elite         your IP and proxy presence are fully hidden; the strongest anonymity.\n    L2   Anonymous     IP is hidden but Via/X-Forwarded-* headers reveal a proxy is in use.\n    L2d  Distorting    L2 plus injects a FAKE public IP into X-Forwarded-For (fingerprint trick).\n    L3   Transparent   your real IP appears in headers; no anonymity, just routing.\n\n  COLUMNS (✓ = desirable outcome)\n    TUNNEL      proxy supports HTTPS via CONNECT (HTTP-only proxies can't reach most modern sites).\n    NO MITM     proxy isn't tampering with TLS, no man-in-the-middle. HTTPS is safe.\n    ACCESS      ✓ connected to every test site; otherwise a 3-char code:\n                403/503/429 = HTTP block/challenge; to = timeout; err = connection broke; ? = other.",
   "progress.label_elapsed": "elapsed",
   "progress.label_ok": "ok",
   "progress.label_fail": "fail",
