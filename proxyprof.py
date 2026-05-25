@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import random
 import re
@@ -289,8 +290,34 @@ CF_GATEKEEPERS: tuple[str, ...] = (
     "https://www.zendesk.com/cdn-cgi/trace",
     "https://www.shopify.com/cdn-cgi/trace",
 )
+
+# Google connectivity-check endpoint'leri. Android/Chrome captive portal
+# kontrolünün kullandığı /generate_204 path'leri; CF /cdn-cgi/trace'in Google
+# eşdeğeri: 204 No Content, sıfır body, UA filtresi yok, son derece düşük
+# maliyet. "Proxy Google altyapısına ulaşabiliyor mu?" sorusunun en hızlı
+# cevabı. Birden fazla Google subdomain'i = farklı GFE edge'leri = "her
+# yerden değil sadece tek bir cluster'a erişiyor" hilesini elemek için.
+GOOGLE_GATEKEEPERS: tuple[str, ...] = (
+    "https://www.google.com/generate_204",
+    "https://www.gstatic.com/generate_204",
+    "https://connectivitycheck.gstatic.com/generate_204",
+    "https://clients3.google.com/generate_204",
+    "https://accounts.google.com/generate_204",
+    "https://www.youtube.com/generate_204",
+)
+
 ACCESS_AUTO_COUNT = 3
 ACCESS_AUTO_SENTINEL = "AUTO"
+
+# Adlı preset değerleri — `--access-test cloudflare` ya da `--access-test
+# google` ile seçilir; ayrıca değersiz `--access-test` Cloudflare default'una
+# eşdeğer. Tanınmayan değerler URL listesi olarak parse edilir.
+ACCESS_PRESET_CLOUDFLARE = "cloudflare"
+ACCESS_PRESET_GOOGLE     = "google"
+ACCESS_MODE_OFF      = "off"      # --access-test verilmedi
+ACCESS_MODE_CF       = "cloudflare"
+ACCESS_MODE_GOOGLE   = "google"
+ACCESS_MODE_CUSTOM   = "custom"   # kullanıcı URL listesi verdi
 
 
 # X-Proxyprof-Proxy header'ının gönderileceği SABİT domain listesi. Hardcoded;
@@ -573,6 +600,123 @@ async def probe(
     )
 
 
+class _DebugLogger:
+    """Tarama sırasında her probe'un detayını JSONL olarak `debug.log`'a yazar.
+
+    Format: her satır self-contained JSON; `kind` alanı probe tipini ayırır
+    ("access" | "tunnel"). Üretici tarafta sadece `log(**rec)` çağrısı, satır
+    her zaman gerçek zamanlı flush edilir (Ctrl+C'de bile o ana kadarki
+    kayıtlar disk'te).
+
+    Açık değilse (`_DEBUG is None`) tüm probe yolları gereksiz veri toplamaktan
+    kaçınır — overhead sıfıra yakın.
+    """
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        # Line-buffered + her satırdan sonra flush — büyük tarama yarıda
+        # kesilse bile log dolu.
+        self.fh = open(path, "w", buffering=1, encoding="utf-8")
+        self.fh.write(json.dumps({
+            "kind": "header",
+            "ts": time.time(),
+            "ua": USER_AGENT,
+            "tunnel_pool": list(TUNNEL_TEST_URLS),
+        }, ensure_ascii=False) + "\n")
+        self.fh.flush()
+
+    def log(self, **fields) -> None:
+        if self.fh is None:
+            return
+        rec = {"ts": time.time(), **fields}
+        try:
+            self.fh.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+            self.fh.flush()
+        except OSError:
+            pass
+
+    def close(self) -> None:
+        if self.fh is not None:
+            try:
+                self.fh.close()
+            except OSError:
+                pass
+            self.fh = None
+
+
+# Module-level debug logger. None = debug kapalı. Main thread'de set edilir,
+# probe'lar (aynı event loop) doğrudan okur — asyncio single-threaded olduğu
+# için lock gerekmez.
+_DEBUG: _DebugLogger | None = None
+
+
+async def _access_check_one(
+    proxy: str, proxy_type: ProxyType, url: str, timeout: float,
+) -> str | None:
+    """Tek bir gatekeeper URL'e proxy üzerinden istek at. None=geçti,
+    str=fail reason kodu. Debug açıksa her attempt'i log'lar."""
+    host, _, port_str = proxy.partition(":")
+    debug = _DEBUG is not None
+    started = time.monotonic()
+    rec: dict = {
+        "kind": "access",
+        "proxy": proxy,
+        "url": url,
+        "ua": USER_AGENT,
+    }
+    fail_reason: str | None = None
+    try:
+        connector = ProxyConnector(
+            proxy_type=proxy_type, host=host, port=int(port_str), rdns=True,
+        )
+        async with aiohttp.ClientSession(
+            connector=connector,
+            headers={"User-Agent": USER_AGENT},
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as session:
+            async with session.get(url, allow_redirects=True) as resp:
+                rec["status"] = resp.status
+                if debug:
+                    # CF + origin teşhisi için önemli header'lar
+                    rec["server"] = resp.headers.get("Server")
+                    rec["cf_ray"] = resp.headers.get("CF-Ray")
+                    rec["cf_cache_status"] = resp.headers.get("CF-Cache-Status")
+                    rec["content_type"] = resp.headers.get("Content-Type")
+                    rec["content_length"] = resp.headers.get("Content-Length")
+                    rec["url_final"] = str(resp.url)
+                    try:
+                        body = await resp.text(errors="replace")
+                        rec["body_snippet"] = body[:300]
+                    except Exception as be:  # noqa: BLE001
+                        rec["body_read_error"] = f"{type(be).__name__}: {be}"[:200]
+                if not (200 <= resp.status < 400):
+                    fail_reason = str(resp.status)
+    except (asyncio.TimeoutError, TimeoutError) as e:
+        rec["error_class"] = type(e).__name__
+        rec["error_msg"] = str(e)[:200]
+        fail_reason = "to"
+    except (
+        aiohttp.ClientConnectorError,
+        aiohttp.ServerDisconnectedError,
+        aiohttp.ClientOSError,
+        aiohttp.ClientPayloadError,
+        ConnectionResetError,
+    ) as e:
+        rec["error_class"] = type(e).__name__
+        rec["error_msg"] = str(e)[:200]
+        fail_reason = "err"
+    except Exception as e:  # noqa: BLE001
+        rec["error_class"] = type(e).__name__
+        rec["error_msg"] = str(e)[:200]
+        fail_reason = "?"
+
+    rec["elapsed"] = round(time.monotonic() - started, 3)
+    rec["fail_reason"] = fail_reason
+    if debug and _DEBUG is not None:
+        _DEBUG.log(**rec)
+    return fail_reason
+
+
 async def _access_check(
     proxy: str, proxy_type: ProxyType, urls: list[str], timeout: float,
 ) -> str | None:
@@ -589,33 +733,13 @@ async def _access_check(
 
     ACC sütununda bu kod birebir basılır (3 char), kullanıcı verdict'i tek
     bakışta yorumlasın.
+
+    Debug açıksa her URL attempt'i `debug.log`'a JSONL olarak işlenir.
     """
-    host, _, port_str = proxy.partition(":")
     for url in urls:
-        connector = ProxyConnector(
-            proxy_type=proxy_type, host=host, port=int(port_str), rdns=True,
-        )
-        try:
-            async with aiohttp.ClientSession(
-                connector=connector,
-                headers={"User-Agent": USER_AGENT},
-                timeout=aiohttp.ClientTimeout(total=timeout),
-            ) as session:
-                async with session.get(url, allow_redirects=True) as resp:
-                    if not (200 <= resp.status < 400):
-                        return str(resp.status)
-        except (asyncio.TimeoutError, TimeoutError):
-            return "to"
-        except (
-            aiohttp.ClientConnectorError,
-            aiohttp.ServerDisconnectedError,
-            aiohttp.ClientOSError,
-            aiohttp.ClientPayloadError,
-            ConnectionResetError,
-        ):
-            return "err"
-        except Exception:  # noqa: BLE001
-            return "?"
+        reason = await _access_check_one(proxy, proxy_type, url, timeout)
+        if reason is not None:
+            return reason
     return None
 
 
@@ -658,9 +782,14 @@ async def _https_probe(
     # apple/firefox/cloudflare endpoint'lerini geçirebilir; tek noktaya bağlı
     # olmamak false-negative oranını ciddi düşürür.
     tunnel_url = random.choice(TUNNEL_TEST_URLS)
+    debug = _DEBUG is not None
+    started = time.monotonic()
+    rec: dict = {"kind": "tunnel", "proxy": proxy, "url": tunnel_url,
+                 "ua": USER_AGENT}
     connector = ProxyConnector(
         proxy_type=proxy_type, host=host, port=int(port_str), rdns=True,
     )
+    result: HttpsProbeResult
     try:
         async with aiohttp.ClientSession(
             connector=connector,
@@ -668,27 +797,46 @@ async def _https_probe(
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as session:
             async with session.get(tunnel_url) as resp:
+                rec["status"] = resp.status
+                if debug:
+                    rec["server"] = resp.headers.get("Server")
+                    rec["cf_ray"] = resp.headers.get("CF-Ray")
                 # Endpoint'ler farklı status döner: 204 (gstatic), 200 (apple,
                 # firefox, cloudflare). 2xx/3xx kabul; aksi durum tunnel açıldı
                 # ama upstream sorunlu demek.
                 if 200 <= resp.status < 400:
-                    return HttpsProbeResult(True, False)
-                return HttpsProbeResult(
-                    False, False, error_class=f"HTTP{resp.status}",
-                )
-    except aiohttp.ClientConnectorCertificateError:
+                    result = HttpsProbeResult(True, False)
+                else:
+                    result = HttpsProbeResult(
+                        False, False, error_class=f"HTTP{resp.status}",
+                    )
+    except aiohttp.ClientConnectorCertificateError as e:
         # Sertifika doğrulama fail oldu: CONNECT açıldı (proxy 200 dönmüş)
         # ama TLS chain proxy tarafından kırılıyor. MITM imzası.
-        return HttpsProbeResult(True, True, error_class="CertError")
+        rec["error_class"] = type(e).__name__
+        rec["error_msg"] = str(e)[:200]
+        result = HttpsProbeResult(True, True, error_class="CertError")
     except aiohttp.ClientSSLError as e:
+        rec["error_class"] = type(e).__name__
+        rec["error_msg"] = str(e)[:200]
         msg = str(e).lower()
         # aiohttp bazen CertVerificationError'ı ClientSSLError olarak
         # sarmalıyor — mesaja bakarak ayırt et.
         if "certificate_verify_failed" in msg or "cert" in msg:
-            return HttpsProbeResult(True, True, error_class="CertError")
-        return HttpsProbeResult(False, False, error_class="SSL")
+            result = HttpsProbeResult(True, True, error_class="CertError")
+        else:
+            result = HttpsProbeResult(False, False, error_class="SSL")
     except Exception as e:  # noqa: BLE001
-        return HttpsProbeResult(False, False, error_class=type(e).__name__)
+        rec["error_class"] = type(e).__name__
+        rec["error_msg"] = str(e)[:200]
+        result = HttpsProbeResult(False, False, error_class=type(e).__name__)
+
+    rec["elapsed"] = round(time.monotonic() - started, 3)
+    rec["tunnel_ok"] = result.tunnel_ok
+    rec["mitm_suspected"] = result.mitm_suspected
+    if debug and _DEBUG is not None:
+        _DEBUG.log(**rec)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -754,7 +902,7 @@ class LiveTable:
     # "ERİŞİM" 6 char > min 3 ✓/×/— olduğu için 6'ya genişler).
     _FIXED: dict[str, tuple[str, int]] = {
         "#":      ("table.header.num",    5),
-        "STATUS": ("table.header.status", 6),
+        "STATUS": ("table.header.status", 7),  # "missing" 7, "elendi"/"seviye"/"eksik" sığar
         "BKT":    ("table.header.bkt",    5),   # HOT/WARM/NEW/COLD 4, SICAK 5
         "PROXY":  ("table.header.proxy",  21),
         "LVL":    ("table.header.lvl",    3),
@@ -777,6 +925,7 @@ class LiveTable:
 
     def __init__(
         self, enabled: bool, total: int, level_max: int = 3,
+        access_mode: str = "off", access_count: int = 0,
         file=sys.stderr,
     ) -> None:
         self.file = file
@@ -789,6 +938,11 @@ class LiveTable:
         # tüm probe testleri geçilse de level_max'tan yüksek seviye "level"
         # status'üne düşer (stdout'a yazılmayacağını kullanıcı bilsin).
         self.level_max = level_max
+        # Aktif --access-test modu (off / cloudflare / google / custom). Legend'in
+        # ERİŞİM satırını dinamik basmak için kullanılır — kullanıcı tam olarak
+        # ne testi yapıldığını sürekli görür.
+        self.access_mode = access_mode
+        self.access_count = access_count
         self.count = 0
         self.ok_count = 0
         self.fail_count = 0
@@ -865,11 +1019,21 @@ class LiveTable:
     def _progress_legend(self) -> str:
         """Progress'in ALTINDA her güncellemede yazılan açıklama satırı.
 
-        Seviye kodlarının (L1/L2/L2d/L3) tam karşılıklarını ve "—" sütun
-        değerinin anlamını sürekli görünür tutar — kullanıcı tarama sırasında
-        tabloya bakarak hatırlamak zorunda kalmaz.
-        """
-        return t("progress.legend")
+        Seviye kodlarının (L1/L2/L2d/L3) tam karşılıklarını ve sütun
+        değerlerinin anlamını sürekli görünür tutar — kullanıcı tarama
+        sırasında tabloya bakarak hatırlamak zorunda kalmaz.
+
+        ERİŞİM satırı dinamik: hangi gatekeeper preset'inin aktif olduğuna
+        göre (CloudFlare WAF/Bot, Google connectivity, kullanıcı listesi, ya da
+        kapalı) farklı bir i18n string'i basılır."""
+        base = t("progress.legend")
+        access_key = {
+            ACCESS_MODE_OFF:    "progress.legend_access_off",
+            ACCESS_MODE_CF:     "progress.legend_access_cloudflare",
+            ACCESS_MODE_GOOGLE: "progress.legend_access_google",
+            ACCESS_MODE_CUSTOM: "progress.legend_access_custom",
+        }.get(self.access_mode, "progress.legend_access_off")
+        return base + "\n" + t(access_key, n=self.access_count)
 
     def _clear_progress_block(self) -> None:
         """En alttaki çok-satırlı progress block'u ANSI ile temizle.
@@ -914,12 +1078,18 @@ class LiveTable:
         # Sadece OK satırlarını tabloya ekle. Fail'ler sayıma katıldı ama
         # tablo gürültüsünü artırmasın.
         if r.ok:
-            # STATUS önceliği:
-            #   1) tunnel/mitm/access testlerinden biri düştü → "filter"
-            #   2) testler geçti AMA anonimlik seviyesi level_max'tan yüksek
+            # STATUS önceliği (yüksekten düşüğe):
+            #   1) outbound_ip yok → "missing"/"eksik" — judge yanıtı parse
+            #      edildi ama REMOTE_ADDR alanı boş (CF challenge / DNS hijack
+            #      / kesik body). L1 sınıflandırması güvenilmez; çıktıya
+            #      yazılmaz ama tabloda görünmesi nedeni kullanıcıya anlatır.
+            #   2) tunnel/mitm/access testlerinden biri düştü → "filter"
+            #   3) testler geçti AMA anonimlik seviyesi level_max'tan yüksek
             #      → "level" (stdout'a yazılmayacak, kullanıcı bilmeli)
-            #   3) hepsi tamam → "ok"
-            if (
+            #   4) hepsi tamam → "ok"
+            if r.outbound_ip is None:
+                status = t("table.status.unknown")
+            elif (
                 (r.access_ok is False)
                 or (r.tunnel_ok is False)
                 or (r.mitm_suspected is True)
@@ -1168,6 +1338,10 @@ def print_config_box(
         rows.append((t("row.allow_mitm"), on))
     if getattr(args, "allow_access_fail", False):
         rows.append((t("row.allow_access_fail"), on))
+    # --user-agent override edildiyse CONFIG'te göster (default Firefox UA
+    # uzun ve gürültülü; sadece override anlamlı bilgi taşır).
+    if getattr(args, "user_agent", None):
+        rows.append((t("row.user_agent"), args.user_agent))
     rows.append((t("row.identity"), on if send_identity else off))
     if reputation_enabled:
         rows.append((t("row.reputation"),
@@ -1188,6 +1362,27 @@ def print_config_box(
     else:
         rows.append((t("row.reputation"), t("value.reputation_off")))
     _print_keyval_box(t("box.title.config"), rows, file)
+
+
+def _apply_protocol_defaults(args: argparse.Namespace) -> None:
+    """Protokole bağımlı default'ları çöz.
+
+    -p http: HTTP proxy'ler genelde basit forwarding yapar; HTTPS CONNECT
+      tüneli kuramayan ya da CF gatekeeper'lara HTTPS ile erişmesi gerek-
+      meyen proxy'ler default'ta yanlışlıkla elenmesin. tunnel/mitm/access
+      testlerini OFF default'la.
+    -p https/socks4/socks5: tam güvenlik bataryasını koştur (mevcut davranış).
+
+    Kullanıcı flag'i açıkça verdiyse (örn. `--tunnel-test`) argparse zaten
+    None'dan başka bir değer üretir; sentinel kontrolüyle override edilmez.
+    """
+    http_only = (args.protocol == "http")
+    if args.tunnel_test is None:
+        args.tunnel_test = not http_only
+    if args.mitm_test is None:
+        args.mitm_test = not http_only
+    if args.access_test is None:
+        args.access_test = None if http_only else ACCESS_AUTO_SENTINEL
 
 
 def _show_db_stats(args: argparse.Namespace) -> int:
@@ -1284,6 +1479,7 @@ def print_result_box(
     mitm_filtered = counts.get("mitm_filtered", 0)
     country_filtered = counts.get("country_filtered", 0)
     distort_filtered = counts.get("distort_filtered", 0)
+    judge_incomplete = counts.get("judge_incomplete", 0)
     dest = t("value.dest_arrow", path=output_path) if output_path else ""
 
     if distorting:
@@ -1315,6 +1511,9 @@ def print_result_box(
     if distort_filtered:
         rows.append((t("row.distort_drop"),
                      t("value.distort_drop_count", n=distort_filtered)))
+    if judge_incomplete:
+        rows.append((t("row.judge_incomplete"),
+                     t("value.judge_incomplete_count", n=judge_incomplete)))
     if timings:
         p50 = _percentile(timings, 50)
         p95 = _percentile(timings, 95)
@@ -1418,6 +1617,11 @@ def _passes_output_filters(
     output'ta filtrelenmez.
     """
     if not r.ok or r.level is None:
+        return False
+    # Judge yanıtı parse edildi ama REMOTE_ADDR alanı boş → L1 sınıflandırması
+    # güvenilmez (CF challenge / DNS hijack / kesik body). Tabloda görünür
+    # ama output'a yazılmaz.
+    if r.outbound_ip is None:
         return False
     if r.level > args.level:
         return False
@@ -1582,19 +1786,27 @@ def _parse_access_urls(arg: str | None) -> list[str]:
     return out
 
 
-def _resolve_access_test(arg: str | None) -> list[str]:
-    """args.access_test → URL listesi.
+def _resolve_access_test(arg: str | None) -> tuple[list[str], str]:
+    """args.access_test → (URL listesi, mode).
 
-    None        → boş liste (test yok)
-    "AUTO"      → CF_GATEKEEPERS'tan rastgele 3 site
-    "url1,url2" → kullanıcı verdiği URL'ler (validate edilir)
+    Mode değerleri ACCESS_MODE_* sabitleri; UI legend'inde "ne testi yapılıyor"
+    bilgisini göstermek için kullanılır.
+
+    None                    → ([], OFF)
+    "AUTO" / "cloudflare"   → CF_GATEKEEPERS'tan rastgele {AUTO_COUNT} site, CF
+    "google"                → GOOGLE_GATEKEEPERS'tan rastgele {AUTO_COUNT} site, GOOGLE
+    "url1,url2"             → kullanıcı verdiği URL'ler (validate edilir), CUSTOM
     """
     if arg is None:
-        return []
-    if arg == ACCESS_AUTO_SENTINEL:
+        return [], ACCESS_MODE_OFF
+    norm = arg.strip().lower()
+    if norm in (ACCESS_AUTO_SENTINEL.lower(), ACCESS_PRESET_CLOUDFLARE):
         k = min(ACCESS_AUTO_COUNT, len(CF_GATEKEEPERS))
-        return random.sample(CF_GATEKEEPERS, k=k)
-    return _parse_access_urls(arg)
+        return random.sample(CF_GATEKEEPERS, k=k), ACCESS_MODE_CF
+    if norm == ACCESS_PRESET_GOOGLE:
+        k = min(ACCESS_AUTO_COUNT, len(GOOGLE_GATEKEEPERS))
+        return random.sample(GOOGLE_GATEKEEPERS, k=k), ACCESS_MODE_GOOGLE
+    return _parse_access_urls(arg), ACCESS_MODE_CUSTOM
 
 
 def _status(msg: str, silent: bool) -> None:
@@ -1613,12 +1825,13 @@ def _status(msg: str, silent: bool) -> None:
 async def amain(args: argparse.Namespace) -> int:
     _status(t("bootstrap.reading"), args.silent)
     proxies = read_proxies(args.file)
-    # --no-access-test her durumda --access-test'in üzerine yazar; AUTO da
-    # özel URL listesi de iptal edilir.
+    # --no-access-test her durumda --access-test'in üzerine yazar; AUTO,
+    # cloudflare, google preset'i, ya da özel URL listesi — hepsi iptal edilir.
     if args.no_access_test:
         access_urls: list[str] = []
+        access_mode = ACCESS_MODE_OFF
     else:
-        access_urls = _resolve_access_test(args.access_test)
+        access_urls, access_mode = _resolve_access_test(args.access_test)
 
     # ---- Reputation (opt-out via --no-reputation) ------------------------
     #
@@ -1737,6 +1950,7 @@ async def amain(args: argparse.Namespace) -> int:
     table = LiveTable(
         enabled=not args.silent, total=len(tasks),
         level_max=args.level,
+        access_mode=access_mode, access_count=len(access_urls),
     )
 
     # Country filter set'leri scan başlamadan inşa edilir; stream-writer
@@ -1801,7 +2015,7 @@ async def amain(args: argparse.Namespace) -> int:
               "bad": 0, "skipped": 0, "blocked": 0,
               "distorting": 0, "tunneled": 0, "mitm": 0,
               "mitm_filtered": 0, "country_filtered": 0,
-              "distort_filtered": 0}
+              "distort_filtered": 0, "judge_incomplete": 0}
     timings: list[float] = []
     countries: Counter = Counter()
     # Filtre KARARI stream-writer'da verildi; bu loop sadece sayım/istatistik
@@ -1827,6 +2041,11 @@ async def amain(args: argparse.Namespace) -> int:
             countries[r.country] += 1
 
         # Filtre sayaçları — neden output'a girmediğini RESULT kutusunda göster.
+        # outbound_ip None: judge response eksik (CF challenge / DNS hijack /
+        # kesik body). _passes_output_filters bunu zaten False döndürür.
+        if r.outbound_ip is None:
+            counts["judge_incomplete"] += 1
+            continue
         if r.level > args.level:
             continue
         if access_urls and not r.access_ok:
@@ -2087,8 +2306,19 @@ def main(argv: list[str] | None = None) -> int:
         help=t("cli.help.judge", domains=", ".join(_TRUSTED_JUDGE_DOMAINS)),
     )
     g_scan.add_argument(
+        "--user-agent", metavar="UA", default=None, dest="user_agent",
+        help=t("cli.help.user_agent"),
+    )
+    # --access-test, --tunnel-test, --mitm-test default'ları protokole bağımlı:
+    #   -p http  → üçü de OFF (HTTP forwarding-only proxy'ler CONNECT/HTTPS
+    #              gatekeeper testlerine takılırdı; bunlar HTTP proxy'nin
+    #              doğal işine bakmaz)
+    #   -p https/socks4/socks5 → üçü de ON (mevcut davranış)
+    # Kullanıcı `--tunnel-test` / `--no-tunnel-test` (vb.) ile her zaman
+    # override edebilir. Resolution post-parse'de `_apply_protocol_defaults`'ta.
+    g_scan.add_argument(
         "--access-test", nargs="?", const=ACCESS_AUTO_SENTINEL,
-        default=ACCESS_AUTO_SENTINEL, metavar="URLS",
+        default=None, metavar="cloudflare|google|URLS",
         help=t("cli.help.access_test", count=ACCESS_AUTO_COUNT),
     )
     g_scan.add_argument(
@@ -2096,13 +2326,13 @@ def main(argv: list[str] | None = None) -> int:
         help=t("cli.help.no_access_test"),
     )
     g_scan.add_argument(
-        "--tunnel-test", action=argparse.BooleanOptionalAction, default=True,
+        "--tunnel-test", action=argparse.BooleanOptionalAction, default=None,
         dest="tunnel_test",
         help=t("cli.help.tunnel_test",
                url=f"{len(TUNNEL_TEST_URLS)} URL'lik havuz, rastgele seçim"),
     )
     g_scan.add_argument(
-        "--mitm-test", action=argparse.BooleanOptionalAction, default=True,
+        "--mitm-test", action=argparse.BooleanOptionalAction, default=None,
         dest="mitm_test",
         help=t("cli.help.mitm_test"),
     )
@@ -2208,8 +2438,38 @@ def main(argv: list[str] | None = None) -> int:
         "--db-stats", action="store_true", dest="db_stats",
         help=t("cli.help.db_stats"),
     )
+    g_misc.add_argument(
+        "--debug", nargs="?", const="debug.log",
+        default=None, metavar="FILE", dest="debug",
+        help=t("cli.help.debug"),
+    )
 
     args = p.parse_args(argv)
+
+    # --user-agent override: modül-level USER_AGENT'ı değiştir. Tüm probe
+    # path'leri (judge/access/tunnel/public-IP) bu adı dynamic-lookup eder.
+    # Debug init'ten ÖNCE değiştir ki log header'a resolved UA düşsün.
+    if args.user_agent:
+        global USER_AGENT
+        USER_AGENT = args.user_agent
+
+    # --debug açıksa modül-level logger'ı set et. Her probe path'i (_DEBUG
+    # is not None) kontrolü ile bu logger'ı kullanır. Açık değilse probe'lar
+    # ekstra metadata toplamaz — overhead sıfıra yakın.
+    if args.debug:
+        global _DEBUG
+        try:
+            _DEBUG = _DebugLogger(args.debug)
+        except OSError as e:
+            print(
+                f"proxyprof: {t('misc.cannot_open_debug', path=args.debug, err=e)}",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            f"proxyprof: {t('misc.debug_enabled', path=args.debug)}",
+            file=sys.stderr,
+        )
 
     # --db-stats inspeksiyon modu: tarama yok, sadece reputation DB'yi
     # özetle ve çık. -p/--protocol bu modda gerekmez (argparse'de required
@@ -2219,6 +2479,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.protocol:
         p.error(t("misc.protocol_required"))
+
+    # Protokole bağımlı default'lar — `--tunnel-test`, `--mitm-test`,
+    # `--access-test` flag'leri kullanıcı tarafından override edilmediyse
+    # burada çözülür.
+    _apply_protocol_defaults(args)
 
     if args.judge and not (
         args.judge.startswith("http://") or args.judge.startswith("https://")
@@ -2231,6 +2496,9 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print(f"\nproxyprof: {t('misc.interrupted')}", file=sys.stderr)
         return 130
+    finally:
+        if _DEBUG is not None:
+            _DEBUG.close()
 
 
 if __name__ == "__main__":
