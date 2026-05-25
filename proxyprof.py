@@ -218,6 +218,7 @@ from judges import (  # noqa: E402
     JudgeUnavailable,
     detect_level,
     extract_country,
+    is_judge_behind_cf,
     judges_for,
     parse_judge_response,
     pick_judge,
@@ -235,6 +236,7 @@ from reputation import (  # noqa: E402
     DEFAULT_WEIGHTS,
     Reputation,
     classify,
+    default_db_dir,
     default_db_path,
     now_epoch,
     should_test_now,
@@ -1386,25 +1388,54 @@ def _apply_protocol_defaults(args: argparse.Namespace) -> None:
 
 
 def _show_db_stats(args: argparse.Namespace) -> int:
-    """--db-stats: reputation DB'yi özetle ve çık. Scan yok.
+    """--db-stats: reputation DB(leri) özetle ve çık. Scan yok.
 
-    Çıktı: tek box, AYAR/SONUÇ ile aynı stil. Bucket dağılımı (HOT/WARM/COLD),
-    last_status, last_seen yaş histogramı, top ülkeler, probation factor
-    dağılımı. DB hiç yoksa açık mesaj.
+    Hangi DB(leri) gösterilir:
+      1. --reputation PATH explicit verildiyse → sadece o
+      2. -p PROTOCOL verildiyse → state-<protocol>.db
+      3. Hiçbiri yoksa → varsayılan dizindeki tüm state*.db dosyalarını
+         enumerate et, her biri için ayrı box bas
     """
     from pathlib import Path as _Path
 
-    db_path = _Path(args.reputation)
-    if not db_path.exists():
-        print(
-            f"proxyprof: {t('misc.db_missing', path=db_path)}",
-            file=sys.stderr,
-        )
-        return 1
+    paths: list[_Path] = []
+    if args.reputation:
+        paths.append(_Path(args.reputation))
+    elif args.protocol:
+        paths.append(default_db_path(args.protocol))
+    else:
+        # Otomatik enumerasyon — kullanıcı hangi protokollerin DB'si var
+        # bilmek zorunda olmasın. Glob `state*.db` legacy state.db'yi de
+        # toplar; alfabetik sıralı bas.
+        db_dir = default_db_dir()
+        if db_dir.exists():
+            paths = sorted(db_dir.glob("state*.db"))
+        if not paths:
+            print(
+                f"proxyprof: {t('misc.db_missing', path=db_dir)}",
+                file=sys.stderr,
+            )
+            return 1
 
+    rc = 0
+    for db_path in paths:
+        if not db_path.exists():
+            print(
+                f"proxyprof: {t('misc.db_missing', path=db_path)}",
+                file=sys.stderr,
+            )
+            rc = 1
+            continue
+        _print_one_db_stats(db_path, args.dead_threshold)
+    return rc
+
+
+def _print_one_db_stats(db_path, dead_threshold: int) -> None:
+    """Tek bir DB için stats kutusunu bas. Çoklu enumerasyonda her DB
+    için ayrı çağrılır."""
     rep = Reputation(db_path)
     try:
-        info = rep.summary(dead_threshold=args.dead_threshold)
+        info = rep.summary(dead_threshold=dead_threshold)
     finally:
         rep.close()
 
@@ -1423,7 +1454,6 @@ def _show_db_stats(args: argparse.Namespace) -> int:
         (t("row.db_warm"),    f"{info['warm']:,}  ({_pct(info['warm'])})"),
         (t("row.db_cold"),    f"{info['cold']:,}  ({_pct(info['cold'])})"),
     ]
-    # Status dağılımı (last_status'a göre)
     for status_key in ("ok", "filter", "fail"):
         n = info["statuses"].get(status_key, 0)
         if n:
@@ -1431,28 +1461,23 @@ def _show_db_stats(args: argparse.Namespace) -> int:
                 t("row.db_status", status=status_key),
                 f"{n:,}  ({_pct(n)})",
             ))
-    # last_seen yaş histogramı (sadece dolu olanları göster)
     for age_label, n in info["ages"].items():
         if n:
             rows.append((
                 t("row.db_age", age=age_label),
                 f"{n:,}  ({_pct(n)})",
             ))
-    # Probation factor dağılımı: hangi consecutive_failures değerinde
-    # kaç COLD proxy var. Üstel backoff'un gerçek etkisini gösterir.
     if info["probation_factors"]:
         parts = [
             f"cf={cf}:{n}"
             for cf, n in info["probation_factors"][:8]
         ]
         rows.append((t("row.db_probation"), "  ".join(parts)))
-    # Top ülkeler
     if info["countries"]:
         parts = [f"{cc}={n:,}" for cc, n in info["countries"][:8]]
         rows.append((t("row.db_countries"), "  ".join(parts)))
 
     _print_keyval_box(t("box.title.db_stats"), rows, sys.stderr)
-    return 0
 
 
 def print_result_box(
@@ -1822,6 +1847,23 @@ def _status(msg: str, silent: bool) -> None:
         sys.stderr.flush()
 
 
+def _print_cf_judge_warning(judge_url: str, evidence: str) -> None:
+    """Kullanıcının `-j` ile verdiği judge CF arkasında tespit edildiğinde basılır.
+
+    Üç ana etkiyi açıkça yaz: bot management false-negative, residential bias,
+    HTTPS-only sınırlama. Çıktı stderr'e gider; `--silent` modunda uyarı (ve
+    onayı) atlanır — script kullanımında kullanıcıya soru sorma şansı yok zaten.
+    """
+    sys.stderr.write("\n")
+    sys.stderr.write(t("judge.cf_warn_header", url=judge_url) + "\n")
+    sys.stderr.write(t("judge.cf_warn_evidence", evidence=evidence) + "\n\n")
+    sys.stderr.write(t("judge.cf_warn_intro") + "\n\n")
+    sys.stderr.write(t("judge.cf_warn_effect1") + "\n\n")
+    sys.stderr.write(t("judge.cf_warn_effect2") + "\n\n")
+    sys.stderr.write(t("judge.cf_warn_effect3") + "\n\n")
+    sys.stderr.flush()
+
+
 async def amain(args: argparse.Namespace) -> int:
     _status(t("bootstrap.reading"), args.silent)
     proxies = read_proxies(args.file)
@@ -1899,11 +1941,41 @@ async def amain(args: argparse.Namespace) -> int:
         public_ip = await get_public_ip(bootstrap, timeout=bootstrap_timeout)
 
         if args.judge:
+            # Kullanıcı explicit judge verdi. CF arkasında mı kontrol et —
+            # arkasındaysa tarama biasını uyar ve E/h onayı al.
             judge_url = args.judge
+            is_cf, evidence = await is_judge_behind_cf(
+                judge_url, bootstrap, timeout=bootstrap_timeout,
+            )
+            if is_cf and not args.silent:
+                _print_cf_judge_warning(judge_url, evidence)
+                if not _prompt(t("judge.cf_continue_prompt"), default_yes=True):
+                    sys.stderr.write(f"proxyprof: {t('judge.cf_aborted')}\n")
+                    if reputation is not None:
+                        reputation.close()
+                    return 1
         else:
+            # Default: CF-dışı judge'lardan rastgele bir sıralama ile dene.
+            # `is_judge_behind_cf` ile CF'e geçenleri pre-filter et; geriye
+            # kalanları shuffle ile her oturumda farklı sıra dene → tek bir
+            # public judge'ın yükünü bizim taramamız üstüne yıkmaz.
+            candidates = list(judges_for(args.protocol))
+            non_cf: list[str] = []
+            for url in candidates:
+                is_cf, _ = await is_judge_behind_cf(
+                    url, session=None, timeout=bootstrap_timeout,
+                )
+                if not is_cf:
+                    non_cf.append(url)
+            if not non_cf:
+                # Beklenmedik durum: tüm default'lar CF'e geçmiş. Fail-safe:
+                # orijinal listeyi shuffle edip kullan, bias riskini logla.
+                sys.stderr.write(f"proxyprof: {t('judge.all_defaults_cf')}\n")
+                non_cf = candidates
+            random.shuffle(non_cf)
             try:
                 judge_url, _ = await pick_judge(
-                    bootstrap, judges_for(args.protocol),
+                    bootstrap, non_cf,
                     timeout=bootstrap_timeout,
                 )
             except JudgeUnavailable as e:
@@ -1945,11 +2017,22 @@ async def amain(args: argparse.Namespace) -> int:
             probation_skipped=len(probation_skipped),
         )
 
+    # Çalışma modu:
+    #   - interactive: ne -o ne -s → kullanıcı tabloyu izleyerek tarama yapıyor.
+    #     stdout'a tekrar ip:port basmak gereksiz (zaten tabloda OUT sütununda
+    #     görünüyor); filtreler de uygulanmaz (kullanıcı tüm probelanan
+    #     proxy'leri görmek ister). Bu mod "keşif" amaçlıdır.
+    #   - producer (-o veya -s): kullanıcı veri üretiyor (dosya veya pipe).
+    #     Filtreler aktif, çıktı ilgili yere yazılır.
+    interactive_mode = not args.output and not args.silent
+
     # LiveTable total = aslında test edilecek proxy sayısı (probation skipped'lar
     # hariç). Probation skipped'lar tabloda görünmez ama özet kutuda raporlanır.
+    # Interactive mod'da level filtresi yokmuş gibi davran (level_max=3) →
+    # "seviye" status'ü hiç tetiklenmez; L2d'ler "iyi" görünür.
     table = LiveTable(
         enabled=not args.silent, total=len(tasks),
-        level_max=args.level,
+        level_max=3 if interactive_mode else args.level,
         access_mode=access_mode, access_count=len(access_urls),
     )
 
@@ -1969,13 +2052,15 @@ async def amain(args: argparse.Namespace) -> int:
     # Stream-writer: --output dosyaya açıldıysa her filtre-geçen sonuç
     # gerçek zamanlı yazılır. Tarama yarıda kesilse bile dosyada bulunmuş
     # proxy'ler kalır. Stdout output'ta finalize'da toplu yazılır.
-    try:
-        writer = _StreamWriter(
-            path=args.output,
-            passes=lambda r: _passes_output_filters(
-                r, args, access_urls, country_whitelist, country_blacklist,
-            ),
+    # Interactive mod'da çıktı tamamen kapatılır — `passes` her zaman False.
+    if interactive_mode:
+        passes_fn: Callable[[ScanResult], bool] = lambda r: False
+    else:
+        passes_fn = lambda r: _passes_output_filters(
+            r, args, access_urls, country_whitelist, country_blacklist,
         )
+    try:
+        writer = _StreamWriter(path=args.output, passes=passes_fn)
     except OSError as e:
         print(
             f"proxyprof: {t('misc.cannot_open_output', path=args.output, err=e)}",
@@ -2071,10 +2156,13 @@ async def amain(args: argparse.Namespace) -> int:
     # ve seen listesini döndürür. Stdout mod'da seen'i sıralı döner.
     kept_sorted = writer.finalize()
 
-    # File output: stream-writer zaten dosyayı yazdı ve finalize'da atomic
-    # replace ile sort+dedupe haline çevirdi. Burada hiçbir şey yapma.
-    # Stdout output: sorted listeyi tek seferde bas.
-    if not args.output:
+    # Çıktı dökümü:
+    #   - `-o FILE`: stream-writer dosyaya zaten yazdı; burada hiçbir şey
+    #     yapma.
+    #   - `-s` (silent, -o yok): sıralı liste stdout'a basılır → pipe için.
+    #   - Interactive (ne -o ne -s): stdout BOŞ kalır; kullanıcı tabloda
+    #     zaten OUT sütununu görür, ek liste gereksiz tekrar olurdu.
+    if not args.output and not interactive_mode:
         for line in kept_sorted:
             print(line)
 
@@ -2337,8 +2425,11 @@ def main(argv: list[str] | None = None) -> int:
         help=t("cli.help.mitm_test"),
     )
     g_scan.add_argument(
-        "--reputation", metavar="PATH", default=str(default_db_path()),
-        help=t("cli.help.reputation", default=default_db_path()),
+        # default=None → main()'de protokol çözüldükten sonra
+        # `default_db_path(protocol)` ile çözülür. Per-protocol DB.
+        "--reputation", metavar="PATH", default=None,
+        help=t("cli.help.reputation",
+               default=str(default_db_dir() / "state-<proto>.db")),
     )
     g_scan.add_argument(
         "--no-reputation", action="store_true",
@@ -2484,6 +2575,20 @@ def main(argv: list[str] | None = None) -> int:
     # `--access-test` flag'leri kullanıcı tarafından override edilmediyse
     # burada çözülür.
     _apply_protocol_defaults(args)
+
+    # Reputation DB yolu protokole özel: state-<proto>.db. Kullanıcı
+    # --reputation ile explicit yol vermediyse burada çözülür.
+    if args.reputation is None:
+        args.reputation = str(default_db_path(args.protocol))
+        # Legacy state.db migrasyon ipucu: eski tek-DB sisteminden geçen
+        # kullanıcı için geçmişi korumak isterse manuel rename yolu söyle.
+        legacy = default_db_dir() / "state.db"
+        target = Path(args.reputation)
+        if legacy.exists() and not target.exists() and not args.no_reputation:
+            print(
+                f"proxyprof: {t('misc.legacy_db_hint', legacy=legacy, target=target)}",
+                file=sys.stderr,
+            )
 
     if args.judge and not (
         args.judge.startswith("http://") or args.judge.startswith("https://")
