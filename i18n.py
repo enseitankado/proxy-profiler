@@ -32,10 +32,13 @@ from pathlib import Path
 _LANG_DIR = Path(__file__).resolve().parent / "i18n"
 _DEFAULT_LANG = "en"
 _ENV_VAR = "PROXYPROF_LANG"
+_COUNTRIES_PATH = _LANG_DIR / "countries.json"
 
 _translations: dict[str, str] = {}
 _fallback: dict[str, str] = {}
 _current_lang = _DEFAULT_LANG
+# {alpha2: {lang: name}}. set_language() ile lazy-load edilir.
+_countries: dict[str, dict[str, str]] = {}
 
 
 def available_languages() -> list[str]:
@@ -112,17 +115,41 @@ def _load_json(path: Path) -> dict[str, str]:
     return {}
 
 
+def _load_countries() -> dict[str, dict[str, str]]:
+    """`i18n/countries.json` dosyasını {alpha2: {lang: name}} sözlüğü olarak yükle.
+
+    Şema: `{"TR": {"en": "Türkiye", "tr": "Türkiye"}, ...}`. Dosya bulunamazsa
+    veya bozulmuşsa boş sözlük; ülke adları kod (ham alpha-2) olarak gösterilir.
+    """
+    try:
+        with open(_COUNTRIES_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for code, names in data.items():
+        if not isinstance(names, dict):
+            continue
+        norm = {str(k): str(v) for k, v in names.items() if isinstance(v, str)}
+        if norm:
+            out[str(code).upper()] = norm
+    return out
+
+
 def set_language(lang: str | None = None) -> str:
     """Aktif dili ayarla. None = sistem tespiti.
 
     İngilizce her zaman fallback olarak yüklenir; eksik anahtarlar
-    için runtime'da kullanılır.
+    için runtime'da kullanılır. Ülke isim sözlüğü de yüklenir.
 
     Returns: efektif olarak ayarlanan dil kodu.
     """
-    global _translations, _fallback, _current_lang
+    global _translations, _fallback, _current_lang, _countries
 
     _fallback = _load_json(_LANG_DIR / f"{_DEFAULT_LANG}.json")
+    _countries = _load_countries()
 
     target = _normalise(lang) if lang else detect_system_language()
     if not target:
@@ -147,6 +174,21 @@ def set_language(lang: str | None = None) -> str:
 
 def current_language() -> str:
     return _current_lang
+
+
+def country_name(code: str | None) -> str:
+    """ISO-3166-1 alpha-2 kodunu aktif dilde tam isme çevir.
+
+    Öncelik: aktif dil > İngilizce fallback > ham kod (bilinmeyen).
+    Boş/None kod → boş string.
+    """
+    if not code:
+        return ""
+    code_up = code.upper()
+    entry = _countries.get(code_up)
+    if not entry:
+        return code_up
+    return entry.get(_current_lang) or entry.get(_DEFAULT_LANG) or code_up
 
 
 def t(key: str, **kwargs: object) -> str:

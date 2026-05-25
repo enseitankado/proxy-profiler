@@ -331,6 +331,7 @@ class ScanResult:
     elapsed: float = 0.0        # saniye
     error: str | None = None    # ok=False ise hata özeti
     access_ok: bool | None = None    # -a verildiyse: tüm URL'lere ulaşıyor mu
+    access_reason: str | None = None # access_ok=False ise neden (3 char kod)
     tunnel_ok: bool | None = None    # --tunnel-test: CONNECT testi geçti mi
     mitm_suspected: bool | None = None  # --mitm-test: TLS chain kırık mı (MITM)
     skipped: bool = False            # probe çalıştırılmadan kısayolla skip edildi
@@ -471,12 +472,17 @@ async def probe(
             country = extract_country(headers)
 
             # Access test: tüm URL'ler pass etmek zorunda. Tek bir hata
-            # access_ok'ı False'a düşürür.
+            # access_ok'ı False'a düşürür; access_reason ilk başarısız URL'in
+            # nedeninin kısa kodu (ACC sütununda gösterilir).
             access_ok: bool | None = None
+            access_reason: str | None = None
             if access_urls:
-                access_ok = await _access_check(
+                reason = await _access_check(
                     proxy, proxy_type, access_urls, timeout,
                 )
+                access_ok = reason is None
+                if reason is not None:
+                    access_reason = reason
 
             # HTTPS probe: tek istek, iki sonuç (tunnel_ok + mitm_suspected).
             # SOCKS proxy'leri zaten tünel'er → CONNECT testi gereksiz; ama MITM
@@ -503,8 +509,8 @@ async def probe(
                 proxy=proxy, ok=True, level=level, distorting=distorting,
                 outbound_ip=outbound, country=country,
                 elapsed=time.monotonic() - started,
-                access_ok=access_ok, tunnel_ok=tunnel_ok,
-                mitm_suspected=mitm_suspected,
+                access_ok=access_ok, access_reason=access_reason,
+                tunnel_ok=tunnel_ok, mitm_suspected=mitm_suspected,
             )
 
         # aiohttp_socks/python_socks kendi istisna hiyerarşisini fırlatır
@@ -525,8 +531,21 @@ async def probe(
 
 async def _access_check(
     proxy: str, proxy_type: ProxyType, urls: list[str], timeout: float,
-) -> bool:
-    """Tüm URL'lere ulaşıyor mu? Tek bir başarısızlık → False."""
+) -> str | None:
+    """Tüm URL'lere erişiyor mu? None = hepsi geçti.
+
+    Geçmedi ise ilk başarısız URL'in nedeni kısa kod olarak döner:
+      "to"  → istek timeout'a çakıldı (proxy yavaş ya da CF edge'e ulaşamadı)
+      "<N>" → 3 haneli HTTP status (örn. "403" = CF Bot Mgmt yasakladı,
+              "503" = CF challenge / Turnstile, "429" = rate limit, "502"/
+              "504" = upstream çürük). Status koddan kullanıcı captcha/yasak
+              ayrımını yapabilir.
+      "err" → bağlantı/proxy kaynaklı IO hatası (ServerDisconnected, TCP RST)
+      "?"   → sınıflandırılamayan diğer exception
+
+    ACC sütununda bu kod birebir basılır (3 char), kullanıcı verdict'i tek
+    bakışta yorumlasın.
+    """
     host, _, port_str = proxy.partition(":")
     for url in urls:
         connector = ProxyConnector(
@@ -540,10 +559,20 @@ async def _access_check(
             ) as session:
                 async with session.get(url, allow_redirects=True) as resp:
                     if not (200 <= resp.status < 400):
-                        return False
+                        return str(resp.status)
+        except (asyncio.TimeoutError, TimeoutError):
+            return "to"
+        except (
+            aiohttp.ClientConnectorError,
+            aiohttp.ServerDisconnectedError,
+            aiohttp.ClientOSError,
+            aiohttp.ClientPayloadError,
+            ConnectionResetError,
+        ):
+            return "err"
         except Exception:  # noqa: BLE001
-            return False
-    return True
+            return "?"
+    return None
 
 
 @dataclass
@@ -648,10 +677,10 @@ class LiveTable:
         "PROXY":  ("table.header.proxy",  21),
         "LVL":    ("table.header.lvl",    3),
         "OUT":    ("table.header.out",    15),
-        "CC":     ("table.header.cc",     2),
+        "CC":     ("table.header.cc",     16),  # tam isim sığsın ("Birleşik Krallık" 16, "United Kingdom" 14)
         "TIME":   ("table.header.time",   6),
         "TUN":    ("table.header.tun",    3),
-        "MITM":   ("table.header.mitm",   4),
+        "MITM":   ("table.header.mitm",   8),   # "MITM YOK" 8, "NO MITM" 7
         "ACC":    ("table.header.acc",    3),
     }
 
@@ -739,16 +768,23 @@ class LiveTable:
         return t("progress.legend")
 
     def _clear_progress_block(self) -> None:
-        """En alttaki 2-satırlık progress block'u ANSI ile temizle.
+        """En alttaki çok-satırlı progress block'u ANSI ile temizle.
 
-        Cursor legend satırı sonunda varsayılır:
-          \\r\\033[K  → legend satırını sil, cursor satır başında
-          \\033[A    → bar satırına bir satır yukarı
-          \\r\\033[K  → bar satırını sil
-        Sonuç: cursor bar satırı başında, iki satır boş — yeni rows/progress
-        yazılabilir.
+        Block = 1 (top padding) + 1 (bar) + N (legend) + 1 (bottom padding).
+        Legend i18n dize'sinde `\\n` sayısı + 1 kadar satır kapsar.
+
+        Cursor bottom padding satırının başında varsayılır (block yazıldıktan
+        sonra son `\\n` cursor'u oraya bırakır):
+          \\r\\033[K          → mevcut (bot pad) satırını sil
+          (\\033[A\\r\\033[K)*k → k kez "bir satır yukarı, sil"
+        Sonuç: cursor top padding satırı başında, tüm block boş.
         """
-        self.file.write("\r\033[K\033[A\r\033[K")
+        legend_lines = self._progress_legend().count("\n") + 1
+        # bar + legend + 3 padding (top + mid + bottom blank)
+        total_lines = 1 + legend_lines + 3
+        parts = ["\r\033[K"]
+        parts.extend(["\033[A\r\033[K"] * (total_lines - 1))
+        self.file.write("".join(parts))
 
     def update(self, r: ScanResult) -> None:
         self.count += 1
@@ -806,6 +842,14 @@ class LiveTable:
                 "—" if r.mitm_suspected is None
                 else ("✓" if not r.mitm_suspected else "×")
             )
+            # ACC: ✓ (geçti) / 3 char reason kod (403, 503, to, err, ?) / —
+            # kod = _access_check'in ilk başarısız URL için döndürdüğü neden.
+            if r.access_ok is None:
+                acc_cell = "—"
+            elif r.access_ok:
+                acc_cell = "✓"
+            else:
+                acc_cell = r.access_reason or "×"
             cells = [
                 f"{self.count}/{self.total}",
                 status,
@@ -813,19 +857,23 @@ class LiveTable:
                 r.proxy,
                 lvl,
                 r.outbound_ip or "—",
-                r.country or "—",
+                i18n.country_name(r.country) if r.country else "—",
                 f"{r.elapsed:.1f}s",
                 _mark(r.tunnel_ok),
                 mitm_mark,
-                _mark(r.access_ok),
+                acc_cell,
             ]
             self.file.write(self._row(cells) + "\n")
 
-        # 2-satırlık progress block'u en altta yeniden çiz (TTY varsa):
-        #   bar+sayım satırı, ardından legend satırı.
+        # Progress block'u en altta yeniden çiz (TTY varsa):
+        #   [üst boşluk] · bar+sayım · [boşluk] · legend · [alt boşluk]
+        # Üç boşluk: block'u OK satırlarından ayır, bar'ı legend'den ayır,
+        # block'u terminal alt kenarından ayır.
         if self.use_ansi:
-            self.file.write(self._progress_line() + "\n")
-            self.file.write(self._progress_legend())
+            self.file.write("\n")                              # top padding
+            self.file.write(self._progress_line() + "\n")      # bar+count
+            self.file.write("\n")                              # mid padding (bar↔legend)
+            self.file.write(self._progress_legend() + "\n")    # legend + bot padding
             self._progress_drawn = True
 
         self.file.flush()
@@ -833,15 +881,19 @@ class LiveTable:
     def finish(self) -> None:
         if not self.enabled:
             return
-        # Canlı 2-satırlık progress block'u temizle.
+        # Canlı progress block'u (üst pad + bar + legend + alt pad) temizle.
         if self.use_ansi and self._progress_drawn:
             self._clear_progress_block()
         # Tablo varsa bottom border'ı kapat.
         if self._headered:
             self.file.write(self._border("└", "┴", "┘") + "\n")
-        # Statik final 2-satırlık progress block (her zaman, TTY olsun olmasın).
+        # Statik final progress block — canlı block ile aynı padding
+        # düzeni: üst + bar + orta + legend + alt boşluk.
+        self.file.write("\n")
         self.file.write(self._progress_line() + "\n")
+        self.file.write("\n")
         self.file.write(self._progress_legend() + "\n")
+        self.file.write("\n")
         self.file.flush()
 
 
@@ -1189,7 +1241,21 @@ def _resolve_access_test(arg: str | None) -> list[str]:
     return _parse_access_urls(arg)
 
 
+def _status(msg: str, silent: bool) -> None:
+    """Bootstrap fazında 'şu an X yapıyorum' satırı.
+
+    Tarama başlamadan önce sırayla input okuma → reputation yükleme → public
+    IP + judge tespiti aşamaları çalışır; tek başına 3-5 saniyeyi bulabilir
+    (özellikle judge listesinin ilkleri ölü ise). Bu sessiz boşluk yerine her
+    aşamanın başında ne yapıldığını yazdırırız; bir önceki adımın tamamlandığı
+    bir sonraki satırın görünmesinden anlaşılır."""
+    if not silent:
+        sys.stderr.write(f"proxyprof: {msg}\n")
+        sys.stderr.flush()
+
+
 async def amain(args: argparse.Namespace) -> int:
+    _status(t("bootstrap.reading"), args.silent)
     proxies = read_proxies(args.file)
     # --no-access-test her durumda --access-test'in üzerine yazar; AUTO da
     # özel URL listesi de iptal edilir.
@@ -1211,6 +1277,7 @@ async def amain(args: argparse.Namespace) -> int:
     run_index = 0
     probation_skipped: list[str] = []           # this run'da test bile edilmedi
     if not args.no_reputation:
+        _status(t("bootstrap.loading_reputation", n=len(proxies)), args.silent)
         reputation = Reputation(Path(args.reputation))
         run_index = reputation.increment_run_index()
         bucket_records = reputation.get_records(proxies)
@@ -1242,16 +1309,20 @@ async def amain(args: argparse.Namespace) -> int:
 
     # ScanTask listesini kur — COLD bucket için kısa timeout, diğerleri için
     # kullanıcı timeout'u. Reputation kapalıysa hepsine kullanıcı timeout'u.
+    # Not: `task_timeout` adı bilinçli; `t` adı modül-level i18n fonksiyonunu
+    # gölgeler ve fonksiyon başındaki `t(...)` çağrılarını UnboundLocalError
+    # ile patlatır.
     tasks: list[ScanTask] = []
     for p in ordered_proxies:
         b = bucket_map.get(p) if reputation is not None else None
-        t = args.cold_timeout if b == BUCKET_COLD else args.timeout
-        tasks.append(ScanTask(proxy=p, timeout=t, bucket=b))
+        task_timeout = args.cold_timeout if b == BUCKET_COLD else args.timeout
+        tasks.append(ScanTask(proxy=p, timeout=task_timeout, bucket=b))
 
     # Tek bir proxysiz HTTP session ile public IP + judge tespit. Proxy başına
     # ayrı connector açacağımız için bu session sadece bootstrap içindir.
     # Bootstrap timeout proxy-başına timeout'tan ayrı tutulur — kullanıcı agresif
     # bir `-T 2` verirse canhazip.com'un TLS handshake'ini kesmesin.
+    _status(t("bootstrap.preparing"), args.silent)
     bootstrap_timeout = max(args.timeout, 10.0)
     async with aiohttp.ClientSession(
         headers={"User-Agent": USER_AGENT},
