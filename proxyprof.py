@@ -7,7 +7,7 @@ URL'e yönlendirerek canlı / anonim / elite / transparent sınıflandırması y
 Filtreyi geçen proxy'leri stdout'a sıralı, dedupe edilmiş halde yazar.
 
 Boru hattı örneği:
-    proxine http -s | proxyprof http -l 1 -o working.lst
+    proxine http -s | proxyprof -p http -l 1 -o working.lst
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -737,13 +738,20 @@ class LiveTable:
         BUCKET_COLD: "table.bucket.cold",
     }
 
-    def __init__(self, enabled: bool, total: int, file=sys.stderr) -> None:
+    def __init__(
+        self, enabled: bool, total: int, level_max: int = 3,
+        file=sys.stderr,
+    ) -> None:
         self.file = file
         self.enabled = enabled
         # ANSI cursor manipülasyonu yalnız TTY'de güvenli; pipe/file'a yazarken
         # progress satırını çizmeyiz (sadece header + OK rows + final summary).
         self.use_ansi = enabled and file.isatty()
         self.total = total
+        # CLI'dan gelen --level filtresi. STATUS hesaplaması için lazım:
+        # tüm probe testleri geçilse de level_max'tan yüksek seviye "level"
+        # status'üne düşer (stdout'a yazılmayacağını kullanıcı bilsin).
+        self.level_max = level_max
         self.count = 0
         self.ok_count = 0
         self.fail_count = 0
@@ -798,12 +806,15 @@ class LiveTable:
         bar = "█" * filled + "░" * (self.BAR_WIDTH - filled)
         digits = len(str(self.total))
         elapsed = time.monotonic() - self._started
+        # Anlık throughput: toplam proxy / geçen süre. İlk birkaç ms'de
+        # elapsed≈0 olduğu için sıfıra bölme: max(elapsed, 0.001).
+        rate = self.count / max(elapsed, 0.001)
         return t(
             "progress.format",
             bar=bar, pct=pct * 100,
             done=self.count, digits=digits, total=self.total,
             ok=self.ok_count, fail=self.fail_count, skip=self.skip_count,
-            elapsed=elapsed,
+            rate=rate, elapsed=elapsed,
         )
 
     def _progress_legend(self) -> str:
@@ -858,13 +869,19 @@ class LiveTable:
         # Sadece OK satırlarını tabloya ekle. Fail'ler sayıma katıldı ama
         # tablo gürültüsünü artırmasın.
         if r.ok:
-            # STATUS: judge'ı geçti ama tunnel/access/mitm düştüyse "filter".
+            # STATUS önceliği:
+            #   1) tunnel/mitm/access testlerinden biri düştü → "filter"
+            #   2) testler geçti AMA anonimlik seviyesi level_max'tan yüksek
+            #      → "level" (stdout'a yazılmayacak, kullanıcı bilmeli)
+            #   3) hepsi tamam → "ok"
             if (
                 (r.access_ok is False)
                 or (r.tunnel_ok is False)
                 or (r.mitm_suspected is True)
             ):
                 status = t("table.status.filter")
+            elif r.level is not None and r.level > self.level_max:
+                status = t("table.status.level")
             else:
                 status = t("table.status.ok")
             if r.level == 1:
@@ -968,21 +985,68 @@ def _percentile(data: list[float], p: float) -> float:
     return sorted_data[f] + (sorted_data[c] - sorted_data[f]) * (k - f)
 
 
+_KEYVAL_BOX_MAX_VALUE = 80  # tek value satırı maks. karakter (sığmazsa wrap)
+
+
+def _wrap_value(value: str, width: int) -> list[str]:
+    """Uzun bir value'yu `width` sınırına göre satırlara böl.
+
+    Öncelik sırası:
+      1. Virgüllerden böl (URL listeleri, ülke listeleri için doğal)
+      2. Boşluklardan böl
+      3. Çaresizse hard-break (kelime ortasında)
+    """
+    if len(value) <= width:
+        return [value]
+    # Önce virgüllerden bölmeyi dene — `--access-test` URL listesi gibi.
+    if "," in value:
+        parts = [p.strip() for p in value.split(",") if p.strip()]
+        lines: list[str] = []
+        current = ""
+        for i, p in enumerate(parts):
+            piece = p + ("," if i < len(parts) - 1 else "")
+            candidate = (current + " " + piece).strip() if current else piece
+            if len(candidate) <= width:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                current = piece
+        if current:
+            lines.append(current)
+        if lines and all(len(ln) <= width for ln in lines):
+            return lines
+    # Boşluk-tabanlı wrap (textwrap.wrap)
+    import textwrap
+    wrapped = textwrap.wrap(value, width=width, break_long_words=True,
+                            break_on_hyphens=False)
+    return wrapped or [value[:width]]
+
+
 def _print_keyval_box(
     title: str, rows: list[tuple[str, str]], file,
 ) -> None:
     """Generic etiketli kutu yazıcı. CONFIG ve RESULT için ortak.
 
     Başlık sol kutucuğa gömülür; üst ve alt sınır `┬`/`┴` ile aynı yerde
-    bölünür:
-       ┌ TITLE ──────┬─────────────┐
-       │ key         │ value       │
-       └─────────────┴─────────────┘
+    bölünür. _KEYVAL_BOX_MAX_VALUE'dan uzun value'lar otomatik olarak
+    satırlara wrap edilir; ek satırlar key sütunu boş olarak gözükür:
+       ┌ TITLE ──────┬─────────────────────────────┐
+       │ key         │ uzun bir değer ilk parça    │
+       │             │ devamı...                   │
+       └─────────────┴─────────────────────────────┘
     """
     if not rows:
         return
-    w_key = max(len(k) for k, _ in rows)
-    w_val = max(len(v) for _, v in rows)
+    # Önce value'ları wrap'le; sonra max genişlikleri hesapla.
+    wrapped_rows: list[tuple[str, list[str]]] = [
+        (k, _wrap_value(v, _KEYVAL_BOX_MAX_VALUE)) for k, v in rows
+    ]
+    w_key = max(len(k) for k, _ in wrapped_rows)
+    w_val = max(
+        max(len(line) for line in vlines)
+        for _, vlines in wrapped_rows
+    )
     key_box_width = w_key + 2   # " key " (padding hem solda hem sağda)
     val_box_width = w_val + 2
 
@@ -994,8 +1058,11 @@ def _print_keyval_box(
         title_seg = f" {title[: key_box_width - 3]}…"[:key_box_width]
 
     print("┌" + title_seg + "┬" + "─" * val_box_width + "┐", file=file)
-    for k, v in rows:
-        print(f"│ {k:<{w_key}} │ {v:<{w_val}} │", file=file)
+    for k, vlines in wrapped_rows:
+        # İlk satırda key görünür; takip eden wrap satırlarında key alanı boş.
+        for i, line in enumerate(vlines):
+            key_cell = k if i == 0 else ""
+            print(f"│ {key_cell:<{w_key}} │ {line:<{w_val}} │", file=file)
     print(
         "└" + "─" * key_box_width + "┴" + "─" * val_box_width + "┘",
         file=file,
@@ -1044,8 +1111,18 @@ def print_config_box(
     # CONFIG kutusunu şişirmesin).
     if getattr(args, "country", None):
         rows.append((t("row.country_filter"), args.country))
+    if getattr(args, "exclude_country", None):
+        rows.append((t("row.country_exclude"), args.exclude_country))
     if getattr(args, "exclude_distorting", False):
         rows.append((t("row.exclude_distorting"), on))
+    # --allow-* override'ları: default'tan saparsa CONFIG'te göster ki
+    # kullanıcı "neden MITM × output'ta?" gibi sürprize düşmesin.
+    if getattr(args, "allow_tunnel_fail", False):
+        rows.append((t("row.allow_tunnel_fail"), on))
+    if getattr(args, "allow_mitm", False):
+        rows.append((t("row.allow_mitm"), on))
+    if getattr(args, "allow_access_fail", False):
+        rows.append((t("row.allow_access_fail"), on))
     rows.append((t("row.identity"), on if send_identity else off))
     if reputation_enabled:
         rows.append((t("row.reputation"),
@@ -1210,6 +1287,109 @@ class IPPoison:
         self._streak.pop(ip, None)
 
 
+def _passes_output_filters(
+    r: ScanResult,
+    args: argparse.Namespace,
+    access_urls: list[str],
+    country_whitelist: set[str],
+    country_blacklist: set[str],
+) -> bool:
+    """Çıktı dosyasına yazılır mı?
+
+    Tüm post-scan filtre kapılarını tek noktada uygular. Test flag'leri
+    (`--tunnel-test`, vb.) testi koşturur; bu fonksiyondaki kapılar testin
+    sonucuna göre output kararı verir. `--allow-*` flag'leri ilgili kapıyı
+    devre dışı bırakır — test yine çalışır, sonuç tabloda görünür ama
+    output'ta filtrelenmez.
+    """
+    if not r.ok or r.level is None:
+        return False
+    if r.level > args.level:
+        return False
+    if (access_urls and not getattr(args, "allow_access_fail", False)
+            and not r.access_ok):
+        return False
+    if (args.tunnel_test and not getattr(args, "allow_tunnel_fail", False)
+            and r.tunnel_ok is False):
+        return False
+    if (args.mitm_test and not getattr(args, "allow_mitm", False)
+            and r.mitm_suspected is True):
+        return False
+    if args.exclude_distorting and r.distorting:
+        return False
+    cc = (r.country or "").upper()
+    if country_whitelist and cc not in country_whitelist:
+        return False
+    if country_blacklist and cc in country_blacklist:
+        return False
+    return True
+
+
+class _StreamWriter:
+    """Tarama sırasında her filtre-geçen proxy'yi dosyaya akıt + dedupe.
+
+    Plan B: yarıda kesilse bile dosyada bulunmuş proxy'ler kalır (Ctrl+C,
+    OOM, terminal kapanması = sıfır kayıp). Tarama başarıyla tamamlanırsa
+    `finalize()` dosyayı sort+dedupe edilmiş haliyle atomic-replace eder.
+
+    Stdout output için (path=None) stream yapılmaz; eskisi gibi finalize'da
+    toplu yazılır — stdout'ta zaten satır-satır akış görmenin değeri yok,
+    pipe alıcısı genelde bütün listeyi bekler.
+    """
+
+    def __init__(
+        self,
+        path: str | None,
+        passes: Callable[[ScanResult], bool],
+    ) -> None:
+        self.path = path
+        self.passes = passes
+        self.seen: set[str] = set()
+        self._fh = None
+        if path:
+            # Line-buffered + her satırdan sonra flush: Ctrl+C anında disk'te
+            # mevcut tüm yazımlar kalır (kernel page cache değil, dosyaya).
+            self._fh = open(path, "w", buffering=1, encoding="utf-8")
+
+    def on_result(self, r: ScanResult) -> None:
+        if r.proxy in self.seen:
+            return
+        if not self.passes(r):
+            return
+        self.seen.add(r.proxy)
+        if self._fh is not None:
+            self._fh.write(r.proxy + "\n")
+            self._fh.flush()
+
+    def finalize(self) -> list[str]:
+        """Sort+dedupe edilmiş kept listesini döndür.
+
+        File output: atomic replace ile dosyayı sıralı haliyle değiştir
+        (`.tmp` + os.replace). Hata olursa ham (sırasız) stream dosyası
+        yerinde kalır — kayıp yok.
+        Stdout: sadece sıralı listeyi döndür, çağıran print eder.
+        """
+        ordered = sorted(self.seen, key=_ip_port_sort_key)
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
+            if self.path:
+                tmp = self.path + ".tmp"
+                try:
+                    with open(tmp, "w", encoding="utf-8") as f:
+                        for line in ordered:
+                            f.write(line + "\n")
+                    os.replace(tmp, self.path)
+                except OSError:
+                    # Sort/replace başarısız → ham stream dosyası kalır,
+                    # kullanıcı sıralanmamış ama tam listeye sahip olur.
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
+        return ordered
+
+
 async def scan(
     tasks: list[ScanTask],
     protocol: str,
@@ -1221,6 +1401,7 @@ async def scan(
     tunnel_test: bool,
     send_identity: bool,
     table: LiveTable | None,
+    writer: _StreamWriter | None = None,
 ) -> list[ScanResult]:
     """Verilen ScanTask listesini async olarak tara.
 
@@ -1258,6 +1439,8 @@ async def scan(
                     poison.record_failure(ip, _classify_error(r.error))
             if table is not None:
                 table.update(r)
+            if writer is not None:
+                writer.on_result(r)
             return r
 
     return await asyncio.gather(*(worker(t) for t in tasks))
@@ -1421,7 +1604,40 @@ async def amain(args: argparse.Namespace) -> int:
 
     # LiveTable total = aslında test edilecek proxy sayısı (probation skipped'lar
     # hariç). Probation skipped'lar tabloda görünmez ama özet kutuda raporlanır.
-    table = LiveTable(enabled=not args.silent, total=len(tasks))
+    table = LiveTable(
+        enabled=not args.silent, total=len(tasks),
+        level_max=args.level,
+    )
+
+    # Country filter set'leri scan başlamadan inşa edilir; stream-writer
+    # her sonuçta filtre kararı verebilsin. Whitelist + blacklist mutex
+    # (argparse zorunlu kılıyor) — en fazla biri dolu.
+    country_whitelist = {
+        c.strip().upper()
+        for c in (args.country or "").split(",")
+        if c.strip()
+    }
+    country_blacklist = {
+        c.strip().upper()
+        for c in (getattr(args, "exclude_country", None) or "").split(",")
+        if c.strip()
+    }
+    # Stream-writer: --output dosyaya açıldıysa her filtre-geçen sonuç
+    # gerçek zamanlı yazılır. Tarama yarıda kesilse bile dosyada bulunmuş
+    # proxy'ler kalır. Stdout output'ta finalize'da toplu yazılır.
+    try:
+        writer = _StreamWriter(
+            path=args.output,
+            passes=lambda r: _passes_output_filters(
+                r, args, access_urls, country_whitelist, country_blacklist,
+            ),
+        )
+    except OSError as e:
+        print(
+            f"proxyprof: {t('misc.cannot_open_output', path=args.output, err=e)}",
+            file=sys.stderr,
+        )
+        return 1
 
     started = time.monotonic()
     results = await scan(
@@ -1435,6 +1651,7 @@ async def amain(args: argparse.Namespace) -> int:
         tunnel_test=args.tunnel_test,
         send_identity=send_identity,
         table=table,
+        writer=writer,
     )
     table.finish()
     elapsed = time.monotonic() - started
@@ -1457,8 +1674,10 @@ async def amain(args: argparse.Namespace) -> int:
               "distort_filtered": 0}
     timings: list[float] = []
     countries: Counter = Counter()
-    kept: list[str] = []
-    country_filter = {c.strip().upper() for c in (args.country or "").split(",") if c.strip()}
+    # Filtre KARARI stream-writer'da verildi; bu loop sadece sayım/istatistik
+    # üretir. Her sonuç önce kategori (level/distort/tunnel/mitm) sayımlarına
+    # işlenir, sonra "neden filtrelendi" sayaçları için filtre zincirinin
+    # aynısı çalıştırılır.
     for r in results:
         if not r.ok:
             if r.skipped:
@@ -1477,7 +1696,7 @@ async def amain(args: argparse.Namespace) -> int:
         if r.country:
             countries[r.country] += 1
 
-        # Filter zinciri — her atlamayı kategori olarak say.
+        # Filtre sayaçları — neden output'a girmediğini RESULT kutusunda göster.
         if r.level > args.level:
             continue
         if access_urls and not r.access_ok:
@@ -1491,30 +1710,24 @@ async def amain(args: argparse.Namespace) -> int:
         if args.exclude_distorting and r.distorting:
             counts["distort_filtered"] += 1
             continue
-        if country_filter and (r.country or "").upper() not in country_filter:
+        cc = (r.country or "").upper()
+        if country_whitelist and cc not in country_whitelist:
             counts["country_filtered"] += 1
             continue
-        kept.append(r.proxy)
+        if country_blacklist and cc in country_blacklist:
+            counts["country_filtered"] += 1
+            continue
 
-    kept_sorted = sorted(set(kept), key=_ip_port_sort_key)
+    # Writer dosyaya yazdıysa atomic-replace ile sort+dedupe haline çevirir
+    # ve seen listesini döndürür. Stdout mod'da seen'i sıralı döner.
+    kept_sorted = writer.finalize()
 
-    if args.output:
-        try:
-            out_fh = open(args.output, "w", encoding="utf-8")
-        except OSError as e:
-            print(
-                f"proxyprof: {t('misc.cannot_open_output', path=args.output, err=e)}",
-                file=sys.stderr,
-            )
-            return 1
-    else:
-        out_fh = sys.stdout
-    try:
+    # File output: stream-writer zaten dosyayı yazdı ve finalize'da atomic
+    # replace ile sort+dedupe haline çevirdi. Burada hiçbir şey yapma.
+    # Stdout output: sorted listeyi tek seferde bas.
+    if not args.output:
         for line in kept_sorted:
-            print(line, file=out_fh)
-    finally:
-        if args.output:
-            out_fh.close()
+            print(line)
 
     if not args.silent:
         summary_counts = dict(counts)
@@ -1690,12 +1903,12 @@ def main(argv: list[str] | None = None) -> int:
     # Tek satır + fixed-width padding biçiminin yerine; dar terminal'de taşmaz,
     # göz hızlı tarar.
     _examples = [
-        ("proxine http -s | proxyprof http",                                  "cli.example.pipe"),
-        ("proxyprof http -f list.lst -l 2 -o ok.lst",                         "cli.example.file_in"),
-        ("proxyprof socks5 -f - -c 1000 -T 8",                                "cli.example.stdin_socks5"),
-        ("proxyprof http -f l.lst --access-test https://a.com,https://b.com", "cli.example.access_test_custom"),
-        ("proxyprof http -f l.lst --no-tunnel-test",                          "cli.example.no_tunnel"),
-        ("proxyprof http -j https://yours.tld/proxyjudge.php",                "cli.example.cf_judge"),
+        ("proxine http -s | proxyprof -p http",                                  "cli.example.pipe"),
+        ("proxyprof -p http -f list.lst -l 2 -o ok.lst",                         "cli.example.file_in"),
+        ("proxyprof -p socks5 -f - -c 1000 -T 8",                                "cli.example.stdin_socks5"),
+        ("proxyprof -p http -f l.lst --access-test https://a.com,https://b.com", "cli.example.access_test_custom"),
+        ("proxyprof -p http -f l.lst --no-tunnel-test",                          "cli.example.no_tunnel"),
+        ("proxyprof -p http -j https://yours.tld/proxyjudge.php",                "cli.example.cf_judge"),
     ]
     epilog_lines = [t("cli.epilog_header")]
     for cmd, key in _examples:
@@ -1709,8 +1922,9 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=_HelpFormatter,
     )
     p.add_argument(
-        "protocol",
+        "-p", "--protocol", required=True,
         choices=("http", "https", "socks4", "socks5"),
+        metavar="PROTO",
         help=t("cli.help.protocol"),
     )
 
@@ -1796,13 +2010,36 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_LEVEL,
         help=t("cli.help.level", default=DEFAULT_LEVEL),
     )
-    g_filter.add_argument(
+    # --country (whitelist) ve --exclude-country (blacklist) birlikte
+    # kullanılamaz — argparse mutex group ile zorunlu kılınır.
+    g_country = g_filter.add_mutually_exclusive_group()
+    g_country.add_argument(
         "--country", metavar="CC[,CC...]", default=None,
         help=t("cli.help.country"),
+    )
+    g_country.add_argument(
+        "--exclude-country", metavar="CC[,CC...]", default=None,
+        dest="exclude_country",
+        help=t("cli.help.exclude_country"),
     )
     g_filter.add_argument(
         "--exclude-distorting", action="store_true",
         help=t("cli.help.exclude_distorting"),
+    )
+    # --allow-* flag'leri: test çalışır ama başarısızlar output'tan ATIL-
+    # MAZ. Tabloda × görünür, dosyaya da yazılır. Bilgi amaçlı tarama veya
+    # düşük güvenlik gereksinimi olan use-case için.
+    g_filter.add_argument(
+        "--allow-tunnel-fail", action="store_true", dest="allow_tunnel_fail",
+        help=t("cli.help.allow_tunnel_fail"),
+    )
+    g_filter.add_argument(
+        "--allow-mitm", action="store_true", dest="allow_mitm",
+        help=t("cli.help.allow_mitm"),
+    )
+    g_filter.add_argument(
+        "--allow-access-fail", action="store_true", dest="allow_access_fail",
+        help=t("cli.help.allow_access_fail"),
     )
 
     # --- output destination --------------------------------------------
