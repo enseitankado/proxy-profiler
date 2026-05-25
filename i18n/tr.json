@@ -59,9 +59,9 @@
   "cli.help.timeout": "Proxy başına timeout, saniye (varsayılan: {default}).",
   "cli.help.retries": "Başarısızlık sonrası tekrar deneme (varsayılan: {default}).",
   "cli.help.judge": "Özel judge URL'i. Kimlik header'ı sadece güvenilir domain'lere gider: {domains}.",
-  "cli.help.access_test": "Gatekeeper süzgeci — değersiz: {count} rastgele CF sitesi; değerli: virgüllü URL listesi (varsayılan: kapalı).",
-  "cli.help.no_access_test": "Erişim testini tamamen kapat.",
-  "cli.help.tunnel_test": "HTTPS CONNECT sondası (varsayılan: açık). Probe URL: {url}.",
+  "cli.help.access_test": "Gatekeeper süzgeci — değersiz: {count} rastgele CF sitesi; değerli: virgüllü URL listesi (varsayılan: kapalı). Not: default CF URL'leri HTTPS; CONNECT yapamayan HTTP-only proxy'ler bu filtreye takılır — sadece HTTP forwarding tarayacaksan --no-tunnel-test ile birlikte --no-access-test kullan.",
+  "cli.help.no_access_test": "Erişim testini tamamen kapat. HTTP forwarding-only proxy'ler için (hedef site sadece düz HTTP) önerilir.",
+  "cli.help.tunnel_test": "HTTPS CONNECT sondası (varsayılan: açık). Probe URL: {url}. Not: sadece HTTP forwarding yapan proxy'ler için (hedef site düz HTTP, HTTPS yok) --no-tunnel-test ile bu kontrolü kapat.",
   "cli.help.mitm_test": "TLS-kıran (MITM) proxy'leri çıktıdan at (varsayılan: açık). --tunnel-test gerekir.",
   "cli.help.reputation": "SQLite reputation DB. HOT/WARM/NEW/COLD bucket + üstel probation. Varsayılan: {default}",
   "cli.help.no_reputation": "Reputation'ı kapat (stateless tarama).",
@@ -79,6 +79,7 @@
   "cli.help.verbose": "Kullanımdan kaldırıldı (no-op).",
   "cli.help.silent": "Sadece stdout'a yaz, stderr'i bastır.",
   "cli.help.lang": "Arayüz dili: {supported} (varsayılan: sistem locale → {default}). Env: PROXYPROF_LANG.",
+  "cli.help.db_stats": "Reputation DB'yi özetle ve çık (tarama yapma). -p/--protocol gerekmez.",
 
   "table.header.num": "#",
   "table.header.status": "DURUM",
@@ -111,6 +112,7 @@
 
   "box.title.config": "AYAR",
   "box.title.result": "SONUÇ",
+  "box.title.db_stats": "REPUTATION DB",
 
   "row.protocol": "protokol",
   "row.input": "girdi",
@@ -136,6 +138,17 @@
   "row.probation": "probation",
   "row.cold_timeout": "cold-timeout",
   "row.lang": "dil",
+
+  "row.db_path":       "DB",
+  "row.run_index":     "tarama #",
+  "row.db_total":      "toplam",
+  "row.db_hot":        "SICAK (son 24sa başarı)",
+  "row.db_warm":       "ILIK (geçmişte başarı)",
+  "row.db_cold":       "SOĞUK (probation'da)",
+  "row.db_status":     "son durum: {status}",
+  "row.db_age":        "son görülme {age}",
+  "row.db_probation":  "probation (cf=ardışık fail)",
+  "row.db_countries":  "ülke (top 8)",
 
   "row.scanned": "taranan",
   "row.good": "iyi",
@@ -176,7 +189,10 @@
   "value.buckets_breakdown": "HOT {hot:,} · WARM {warm:,} · NEW {new:,} · COLD {cold:,}",
   "value.probation_skipped": "{n:,} COLD proxy atlandı",
 
+  "warn.http_proxy_https_judge": "uyarı: HTTP proxy + HTTPS judge. Anonimlik tespiti TLS-tunnel davranışına bağlı; CONNECT-yetkin olmayan proxy'ler HTTP forwarding'e düşüp L2/L2d gözükebilir, CONNECT-yetkin olanlar çoğunlukla L1 görünür. Daha güvenilir anonimlik sınıflandırması için -j'yi kaldırıp dahili HTTP judge'larını kullanın.",
   "misc.interrupted": "kesildi",
+  "misc.protocol_required": "şu argüman zorunlu: -p/--protocol",
+  "misc.db_missing": "reputation DB bulunamadı: {path} (önce normal tarama çalıştırın veya --reputation ile yol verin)",
   "misc.cannot_open_output": "'{path}' açılamıyor: {err}",
   "misc.unsupported_lang": "desteklenmeyen dil '{lang}'. Mevcut: {supported}. '{fallback}' diline düşülüyor."
 }

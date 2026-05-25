@@ -59,9 +59,9 @@
   "cli.help.timeout": "Per-proxy timeout, seconds (default: {default}).",
   "cli.help.retries": "Retries per proxy on failure (default: {default}).",
   "cli.help.judge": "Custom judge URL. Identity header sent only to trusted domains: {domains}.",
-  "cli.help.access_test": "Gatekeeper filter — no value: {count} random CF sites; with value: comma-separated URLs (default: off).",
-  "cli.help.no_access_test": "Skip access-test entirely.",
-  "cli.help.tunnel_test": "HTTPS CONNECT probe (default: on). Probe URL: {url}.",
+  "cli.help.access_test": "Gatekeeper filter — no value: {count} random CF sites; with value: comma-separated URLs (default: off). Note: default CF URLs are HTTPS; HTTP-only proxies that can't tunnel will fail this filter — pair with --no-tunnel-test --no-access-test for HTTP forwarding-only scans.",
+  "cli.help.no_access_test": "Skip access-test entirely. Recommended for HTTP-only forwarding proxies (target sites use plain HTTP only).",
+  "cli.help.tunnel_test": "HTTPS CONNECT probe (default: on). Probe URL: {url}. Note: for HTTP forwarding-only proxies (plain HTTP target sites, no HTTPS), use --no-tunnel-test to keep them in output.",
   "cli.help.mitm_test": "Drop TLS-intercepting (MITM) proxies from output (default: on). Needs --tunnel-test.",
   "cli.help.reputation": "SQLite reputation DB. HOT/WARM/NEW/COLD buckets + exponential probation. Default: {default}",
   "cli.help.no_reputation": "Disable reputation (stateless scan).",
@@ -79,6 +79,7 @@
   "cli.help.verbose": "Deprecated (no-op).",
   "cli.help.silent": "Write list to stdout only; suppress stderr.",
   "cli.help.lang": "UI language: {supported} (default: system locale → {default}). Env: PROXYPROF_LANG.",
+  "cli.help.db_stats": "Summarize the reputation DB and exit (no scan). -p/--protocol not required.",
 
   "table.header.num": "#",
   "table.header.status": "STATUS",
@@ -111,6 +112,7 @@
 
   "box.title.config": "CONFIG",
   "box.title.result": "RESULT",
+  "box.title.db_stats": "REPUTATION DB",
 
   "row.protocol": "protocol",
   "row.input": "input",
@@ -136,6 +138,17 @@
   "row.probation": "probation",
   "row.cold_timeout": "cold-timeout",
   "row.lang": "language",
+
+  "row.db_path":       "db",
+  "row.run_index":     "run #",
+  "row.db_total":      "total",
+  "row.db_hot":        "HOT (success ≤ 24h)",
+  "row.db_warm":       "WARM (alive history)",
+  "row.db_cold":       "COLD (in probation)",
+  "row.db_status":     "last status: {status}",
+  "row.db_age":        "last seen {age}",
+  "row.db_probation":  "probation (cf=consec fail)",
+  "row.db_countries":  "country (top 8)",
 
   "row.scanned": "scanned",
   "row.good": "good",
@@ -176,7 +189,10 @@
   "value.buckets_breakdown": "HOT {hot:,} · WARM {warm:,} · NEW {new:,} · COLD {cold:,}",
   "value.probation_skipped": "{n:,} COLD proxy skipped",
 
+  "warn.http_proxy_https_judge": "warning: HTTP proxy + HTTPS judge. Anonymity detection depends on TLS-tunnel behaviour; CONNECT-incapable proxies fall through to HTTP forwarding and may appear as L2/L2d, while CONNECT-capable proxies will mostly look L1. For more reliable anonymity classification, drop -j to use the built-in HTTP judges.",
   "misc.interrupted": "interrupted",
+  "misc.protocol_required": "the following argument is required: -p/--protocol",
+  "misc.db_missing": "reputation DB not found: {path} (run a regular scan first or pass --reputation PATH)",
   "misc.cannot_open_output": "cannot open '{path}': {err}",
   "misc.unsupported_lang": "unsupported language '{lang}'. Available: {supported}. Falling back to '{fallback}'."
 }

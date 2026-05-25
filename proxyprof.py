@@ -519,24 +519,34 @@ async def probe(
                     access_reason = reason
 
             # HTTPS probe: tek istek, iki sonuç (tunnel_ok + mitm_suspected).
-            # SOCKS proxy'leri zaten tünel'er → CONNECT testi gereksiz; ama MITM
-            # için yine HTTPS probe atmamız gerek (SOCKS proxy de MITM yapabilir).
+            # Üç durum:
+            #   1) Judge URL HTTPS  → judge probe ZATEN CONNECT tunnel + TLS
+            #      doğrulama testidir. Başarılı olduysa (buraya geldik) tunnel
+            #      kanıtlanmış ve cert chain de doğru. Ayrıca _https_probe
+            #      atmak boşa istek + zaman. Doğrudan True/False ata.
+            #   2) SOCKS proxy   → katman-4 tunnel daima açıktır; tunnel_ok=True
+            #      kabul edilir, ama MITM olabilir → yine _https_probe at.
+            #   3) HTTP judge + HTTP/HTTPS proxy → judge HTTP forwarding ile
+            #      gitti; HTTPS yetisi henüz test edilmedi → _https_probe gerekli.
             tunnel_ok: bool | None = None
             mitm_suspected: bool | None = None
+            judge_is_https = judge_url.lower().startswith("https://")
             if tunnel_test:
-                if protocol in ("socks4", "socks5"):
-                    # SOCKS daima tünel'er, ama MITM olabilir → yine probe at,
-                    # tunnel_ok'u True olarak işaretle.
-                    probe_result = await _https_probe(
-                        proxy, proxy_type, timeout,
-                    )
+                if judge_is_https and protocol not in ("socks4", "socks5"):
+                    # Durum 1: judge zaten CONNECT + TLS testini geçti.
                     tunnel_ok = True
-                    mitm_suspected = probe_result.mitm_suspected
+                    mitm_suspected = False
                 else:
+                    # Durum 2/3: ayrı HTTPS probe.
                     probe_result = await _https_probe(
                         proxy, proxy_type, timeout,
                     )
-                    tunnel_ok = probe_result.tunnel_ok
+                    # SOCKS için tunnel her zaman True; HTTP/HTTPS için
+                    # probe'un kararına güven.
+                    if protocol in ("socks4", "socks5"):
+                        tunnel_ok = True
+                    else:
+                        tunnel_ok = probe_result.tunnel_ok
                     mitm_suspected = probe_result.mitm_suspected
 
             return ScanResult(
@@ -1145,6 +1155,76 @@ def print_config_box(
     _print_keyval_box(t("box.title.config"), rows, file)
 
 
+def _show_db_stats(args: argparse.Namespace) -> int:
+    """--db-stats: reputation DB'yi özetle ve çık. Scan yok.
+
+    Çıktı: tek box, AYAR/SONUÇ ile aynı stil. Bucket dağılımı (HOT/WARM/COLD),
+    last_status, last_seen yaş histogramı, top ülkeler, probation factor
+    dağılımı. DB hiç yoksa açık mesaj.
+    """
+    from pathlib import Path as _Path
+
+    db_path = _Path(args.reputation)
+    if not db_path.exists():
+        print(
+            f"proxyprof: {t('misc.db_missing', path=db_path)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    rep = Reputation(db_path)
+    try:
+        info = rep.summary(dead_threshold=args.dead_threshold)
+    finally:
+        rep.close()
+
+    total = info["total"]
+
+    def _pct(n: int) -> str:
+        if not total:
+            return "—"
+        return f"{100.0 * n / total:.1f}%"
+
+    rows: list[tuple[str, str]] = [
+        (t("row.db_path"),    info["db_path"]),
+        (t("row.run_index"),  f"#{info['run_index']}"),
+        (t("row.db_total"),   f"{total:,}"),
+        (t("row.db_hot"),     f"{info['hot']:,}  ({_pct(info['hot'])})"),
+        (t("row.db_warm"),    f"{info['warm']:,}  ({_pct(info['warm'])})"),
+        (t("row.db_cold"),    f"{info['cold']:,}  ({_pct(info['cold'])})"),
+    ]
+    # Status dağılımı (last_status'a göre)
+    for status_key in ("ok", "filter", "fail"):
+        n = info["statuses"].get(status_key, 0)
+        if n:
+            rows.append((
+                t("row.db_status", status=status_key),
+                f"{n:,}  ({_pct(n)})",
+            ))
+    # last_seen yaş histogramı (sadece dolu olanları göster)
+    for age_label, n in info["ages"].items():
+        if n:
+            rows.append((
+                t("row.db_age", age=age_label),
+                f"{n:,}  ({_pct(n)})",
+            ))
+    # Probation factor dağılımı: hangi consecutive_failures değerinde
+    # kaç COLD proxy var. Üstel backoff'un gerçek etkisini gösterir.
+    if info["probation_factors"]:
+        parts = [
+            f"cf={cf}:{n}"
+            for cf, n in info["probation_factors"][:8]
+        ]
+        rows.append((t("row.db_probation"), "  ".join(parts)))
+    # Top ülkeler
+    if info["countries"]:
+        parts = [f"{cc}={n:,}" for cc, n in info["countries"][:8]]
+        rows.append((t("row.db_countries"), "  ".join(parts)))
+
+    _print_keyval_box(t("box.title.db_stats"), rows, sys.stderr)
+    return 0
+
+
 def print_result_box(
     scanned: int,
     counts: dict,
@@ -1586,6 +1666,21 @@ async def amain(args: argparse.Namespace) -> int:
 
     send_identity = _judge_accepts_proxyprof_header(judge_url)
 
+    # HTTP proxy + HTTPS judge uyumsuzluğu uyarısı.
+    # HTTPS judge'a giden trafik CONNECT tunnel + TLS içinden geçer, proxy
+    # header inject EDEMEZ. Bu yüzden anonimlik tespiti (L1/L2/L2d) bu
+    # senaryoda HTTP forwarding gözlemine bağlıdır ve yanıltıcı olabilir:
+    # CONNECT-yetkin proxy hep L1 görünür, CONNECT-yetkinsiz proxy plain
+    # forwarding'e düşerse L2/L2d görünebilir. HTTP judge auto-seçimi (-j
+    # vermezsen) bu sorunu otomatik elimine eder.
+    if (
+        args.protocol == "http"
+        and judge_url.lower().startswith("https://")
+        and not args.silent
+    ):
+        print(f"proxyprof: {t('warn.http_proxy_https_judge')}",
+              file=sys.stderr)
+
     # CONFIG kutusu taramanın BAŞINDA basılır — progress satırı altında akar,
     # OK satırları sonra eklenir. Kullanıcı tarama bittiğinde tekrar görmesin
     # diye sonda yeniden basılmaz. silent modda hiç basılmaz.
@@ -1922,7 +2017,7 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=_HelpFormatter,
     )
     p.add_argument(
-        "-p", "--protocol", required=True,
+        "-p", "--protocol",
         choices=("http", "https", "socks4", "socks5"),
         metavar="PROTO",
         help=t("cli.help.protocol"),
@@ -2074,8 +2169,21 @@ def main(argv: list[str] | None = None) -> int:
             default="en",
         ),
     )
+    g_misc.add_argument(
+        "--db-stats", action="store_true", dest="db_stats",
+        help=t("cli.help.db_stats"),
+    )
 
     args = p.parse_args(argv)
+
+    # --db-stats inspeksiyon modu: tarama yok, sadece reputation DB'yi
+    # özetle ve çık. -p/--protocol bu modda gerekmez (argparse'de required
+    # olmadığı için kontrolü manuel yapıyoruz).
+    if args.db_stats:
+        return _show_db_stats(args)
+
+    if not args.protocol:
+        p.error(t("misc.protocol_required"))
 
     if args.judge and not (
         args.judge.startswith("http://") or args.judge.startswith("https://")
