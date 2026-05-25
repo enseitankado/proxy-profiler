@@ -695,6 +695,33 @@ async def _https_probe(
 # UI
 # ---------------------------------------------------------------------------
 
+def _self_cpu_time() -> float:
+    """Bu Python süreci için kullanıcı+sistem CPU süresi (saniye).
+
+    `os.times()` tüm threadleri (ve asyncio task'larını taşıyan event-loop
+    thread'ini) toplam CPU saatleri olarak verir; multi-core sistemde
+    elapsed'den yüksek olabilir (ör. 4 core %100 → 400% gibi).
+    """
+    t = os.times()
+    return t.user + t.system + t.children_user + t.children_system
+
+
+def _self_mem_mb() -> float:
+    """Bu sürecin RSS (Resident Set Size) — MB cinsinden.
+
+    Linux'ta `/proc/self/status` → `VmRSS:` satırını kullanır (KB cinsinden).
+    Diğer platformlarda 0.0 döner (progress'te "—" gibi sade kalır).
+    """
+    try:
+        with open("/proc/self/status", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024  # kB → MB
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0.0
+
+
 class LiveTable:
     """Tarama sırasında her **başarılı** sonuç satır olarak akan canlı tablo
     + en alt satırda canlı progress.
@@ -783,6 +810,8 @@ class LiveTable:
             code: t(key) for code, (key, _) in self._FIXED.items()
         }
         self._started = time.monotonic()
+        # Progress satırı için CPU kümül başlangıcı — sürekli ortalama göster.
+        self._start_cpu_time = _self_cpu_time()
 
     def _all_widths(self) -> list[int]:
         return list(self._cols.values())
@@ -818,13 +847,19 @@ class LiveTable:
         elapsed = time.monotonic() - self._started
         # Anlık throughput: toplam proxy / geçen süre. İlk birkaç ms'de
         # elapsed≈0 olduğu için sıfıra bölme: max(elapsed, 0.001).
-        rate = self.count / max(elapsed, 0.001)
+        wall = max(elapsed, 0.001)
+        rate = self.count / wall
+        # CPU yüzdesi — tarama başından beri kümülatif. Multi-core sistemde
+        # 100%'u aşabilir (örn. 4 core'da %100 verim → 400%); bu doğru ve
+        # gerçek paralelizmı gösterir.
+        cpu_pct = ((_self_cpu_time() - self._start_cpu_time) / wall) * 100
+        mem_mb = _self_mem_mb()
         return t(
             "progress.format",
             bar=bar, pct=pct * 100,
             done=self.count, digits=digits, total=self.total,
             ok=self.ok_count, fail=self.fail_count, skip=self.skip_count,
-            rate=rate, elapsed=elapsed,
+            rate=rate, cpu=cpu_pct, mem=mem_mb, elapsed=elapsed,
         )
 
     def _progress_legend(self) -> str:
