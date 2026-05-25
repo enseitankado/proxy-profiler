@@ -242,21 +242,34 @@ from reputation import (  # noqa: E402
 
 DEFAULT_LEVEL = 1
 DEFAULT_CONCURRENCY = 500
-DEFAULT_TIMEOUT = 3.0
+DEFAULT_TIMEOUT = 5.0
 DEFAULT_RETRIES = 1
 # COLD bucket için kısa timeout: zaten %90+'ı timeout'a düşecek, beklemeye
 # gerek yok. HOT/WARM/NEW normal --timeout'u kullanır.
-DEFAULT_COLD_TIMEOUT = 2.0
+DEFAULT_COLD_TIMEOUT = 3.0
 
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0"
 )
 
-# HTTPS CONNECT tünel testi için kullanılır. Google'ın generate_204 endpoint'i:
-# 204 No Content döner, body sıfır byte. Hızlı, kararlı, header'lerde
-# bilgi sızdırmaz. SOCKS proxy'leri zaten tünel'er, sadece http/https
-# proxy'lerde anlamlı bir sınav.
-TUNNEL_TEST_URL = "https://www.gstatic.com/generate_204"
+# HTTPS CONNECT tünel testi için kullanılan endpoint havuzu.
+#
+# Her probe'da bu listeden rastgele 1 URL seçilir. Tek bir URL kullanmak iki
+# tür proxy'yi haksız yere "tunnel kırık" işaretler:
+#   1) gstatic.com'u hostname-bazlı bloklayan operatörler (yaygın — Çin, RU)
+#   2) belirli sağlayıcının CDN edge'leri tarafından IP'si banlı proxy'ler
+# Listede 4 ayrı sağlayıcı/zone var; tek bir sağlayıcı bir proxy'yi blocluyorsa
+# diğeri muhtemelen geçer. Hepsi:
+#   - HTTPS, valid public cert (MITM tespiti için gerekli)
+#   - 2xx/3xx döner, küçük body, captive-portal-style endpoint
+#   - Header'lerde kullanıcı bilgisi sızdırmaz
+#   - Datacenter IP'lerine karşı agresif bot-blok uygulamaz
+TUNNEL_TEST_URLS: tuple[str, ...] = (
+    "https://captive.apple.com/hotspot-detect.html",   # Apple captive-check; "Success" döner
+    "https://detectportal.firefox.com/success.txt",    # Mozilla; "success\n" döner
+    "https://www.gstatic.com/generate_204",            # Google; 204 No Content
+    "https://1.1.1.1/cdn-cgi/trace",                   # Cloudflare DNS edge; trace text
+)
 
 # `--access-test` bayrağı değer almadan kullanılırsa bu listeden rastgele 3 URL
 # seçilir. Hepsi /cdn-cgi/trace endpoint'i — her Cloudflare-korumalı sitede
@@ -397,18 +410,38 @@ def _looks_like_ipv4(s: str) -> bool:
 # Network primitives
 # ---------------------------------------------------------------------------
 
+# Public IP tespiti için fallback zinciri. Her biri düz metin IPv4 döner.
+# Tek bir sağlayıcıya bağlı kalmamak için sıralı dene; ilk geçerli yanıt kazanır.
+# Sıra rastgele değil: en hızlı/en kararlı olanlar başta.
+_PUBLIC_IP_SOURCES: tuple[str, ...] = (
+    "https://checkip.amazonaws.com/",   # AWS, çok stabil, plain IP
+    "https://api.ipify.org/",           # ipify, popüler, plain IP
+    "https://ifconfig.me/ip",           # ifconfig.me, plain IP
+    "https://icanhazip.com/",           # canhazip alternatif
+    "https://canhazip.com/",            # Cloudflare-arkalı, ara sıra rate-limit
+)
+
+
 async def get_public_ip(session: aiohttp.ClientSession, timeout: float) -> str:
-    """canhazip.com'dan istemcinin gerçek public IP'sini al. Hata → boş string."""
-    try:
-        async with session.get(
-            "https://canhazip.com/",
-            timeout=aiohttp.ClientTimeout(total=timeout),
-        ) as resp:
-            text = (await resp.text()).strip()
-            if _looks_like_ipv4(text):
-                return text
-    except (aiohttp.ClientError, TimeoutError, OSError):
-        pass
+    """Sırayla fallback servisleri dene; ilk geçerli IPv4'ü döndür.
+
+    Tek bir sağlayıcı (canhazip vs.) anlık down olursa diğerleri ayakta
+    kalsın. Hepsi başarısızsa public_ip="" → distorting tespiti zayıflar
+    ama tarama yine de yürür.
+    """
+    for url in _PUBLIC_IP_SOURCES:
+        try:
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                if resp.status != 200:
+                    continue
+                text = (await resp.text()).strip()
+                if _looks_like_ipv4(text):
+                    return text
+        except (aiohttp.ClientError, TimeoutError, OSError):
+            continue
     return ""
 
 
@@ -610,6 +643,10 @@ async def _https_probe(
       - Bağlantı/timeout hataları → tunnel_ok=False, mitm_suspected=False.
     """
     host, _, port_str = proxy.partition(":")
+    # Havuzdan rastgele 1 URL: gstatic.com'u hostname-bazlı bloklayan proxy'ler
+    # apple/firefox/cloudflare endpoint'lerini geçirebilir; tek noktaya bağlı
+    # olmamak false-negative oranını ciddi düşürür.
+    tunnel_url = random.choice(TUNNEL_TEST_URLS)
     connector = ProxyConnector(
         proxy_type=proxy_type, host=host, port=int(port_str), rdns=True,
     )
@@ -619,8 +656,11 @@ async def _https_probe(
             headers={"User-Agent": USER_AGENT},
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as session:
-            async with session.get(TUNNEL_TEST_URL) as resp:
-                if resp.status == 204:
+            async with session.get(tunnel_url) as resp:
+                # Endpoint'ler farklı status döner: 204 (gstatic), 200 (apple,
+                # firefox, cloudflare). 2xx/3xx kabul; aksi durum tunnel açıldı
+                # ama upstream sorunlu demek.
+                if 200 <= resp.status < 400:
                     return HttpsProbeResult(True, False)
                 return HttpsProbeResult(
                     False, False, error_class=f"HTTP{resp.status}",
@@ -666,6 +706,10 @@ class LiveTable:
     """
 
     BAR_WIDTH = 20
+    # Uzun taramalarda kullanıcı tablo başlığını ekran dışına kaydırdıktan
+    # sonra hangi sütunun ne olduğunu unutmasın diye her N OK satırda bir
+    # başlık satırı yeniden basılır.
+    HEADER_REPEAT = 35
     # Internal kod → (i18n anahtar, içerik için minimum genişlik). Header
     # label'ı bu min'den uzunsa sütun otomatik genişler (örn. en "OUTBOUND"
     # 8 char > içerik IP'si zaten 15 olduğu için min 15 yine kazanır; tr
@@ -706,6 +750,10 @@ class LiveTable:
         self.skip_count = 0
         self._headered = False
         self._progress_drawn = False
+        # Son header'dan beri kaç OK satır yazıldı — HEADER_REPEAT'e ulaşınca
+        # bir alt-header bloğu (separator + label row + separator) yeniden
+        # basılır ve sayaç sıfırlanır.
+        self._rows_since_header = 0
         # Sütun adı → genişlik (etiket uzunluğunu da hesaba kat).
         self._cols: dict[str, int] = {}
         for code, (key, min_w) in self._FIXED.items():
@@ -863,7 +911,17 @@ class LiveTable:
                 mitm_mark,
                 acc_cell,
             ]
+            # HEADER_REPEAT OK satırı geçtiyse, bu satırdan önce başlık
+            # bloğunu yeniden bas. Kullanıcı uzun taramalarda terminal
+            # scroll'ladıktan sonra sütun adlarına tekrar bakabilir.
+            if self._rows_since_header >= self.HEADER_REPEAT:
+                labels = [self._labels[code] for code in self._cols.keys()]
+                self.file.write(self._border("├", "┼", "┤") + "\n")
+                self.file.write(self._row(labels) + "\n")
+                self.file.write(self._border("├", "┼", "┤") + "\n")
+                self._rows_since_header = 0
             self.file.write(self._row(cells) + "\n")
+            self._rows_since_header += 1
 
         # Progress block'u en altta yeniden çiz (TTY varsa):
         #   [üst boşluk] · bar+sayım · [boşluk] · legend · [alt boşluk]
@@ -1483,14 +1541,138 @@ async def amain(args: argparse.Namespace) -> int:
 # CLI
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# --help renklendirme
+# ---------------------------------------------------------------------------
+# argparse format_help() çıktısı düz metindir; ANSI renkleri post-process ile
+# enjekte ediyoruz. Bu sayede argparse'ın kolon hizalama mantığı (raw uzunluk
+# üzerinden) bozulmaz — renk kodları çıktıyı üretildikten SONRA eklenir.
+#
+# Renkler:
+#   • bölüm başlıkları (örn. "options:", "tarama & sondalar:", "Örnekler:") → bold cyan
+#   • uzun + kısa opsiyon bayrakları (örn. --reputation, -f) → green
+#   • metavar'lar (FILE, PATH, SECONDS, CC[,CC...]) + choices ({http,https,...}) → yellow
+#   • (varsayılan: X) / (default: X) → dim
+#   • örnek komut satırları (`  $ ...`) → bold green
+#
+# Devre dışı: NO_COLOR env var (standart, https://no-color.org/) ya da stderr
+# bir TTY değilse renksiz çıkar — pipe/file/CI ortamında gürültü yok.
+
+_C_RESET   = "\033[0m"
+_C_BOLD    = "\033[1m"
+_C_DIM     = "\033[2m"
+_C_GREEN   = "\033[32m"
+_C_YELLOW  = "\033[33m"
+_C_CYAN    = "\033[36m"
+
+# Tek satırlık "header: rest" yapısı: satır non-space ile başlar, içinde ':' YOK,
+# ama satır sonunda ':' var. Argparse section başlıkları (`options:`,
+# `positional arguments:`, custom grup başlıkları, `Örnekler:`) bu desene
+# girer; "usage: ..." satırı GİRMEZ çünkü ':' satırın ortasında.
+_RE_SECTION = re.compile(r"^(\S[^\n:]{0,80}:)$", re.MULTILINE)
+# "usage:" prefix'i ayrı — satır sonu beklenmez.
+_RE_USAGE_PREFIX = re.compile(r"^(usage:)", re.MULTILINE)
+# Bayrak + metavar combo: ARGPARSE'ın ürettiği bilinen metavar'lar bayrağın
+# hemen ardından gelir. Yalnız bu konum'da boyarsak description'daki "URL",
+# "CF", "HTTPS" gibi büyük harfli normal kelimeler false-positive olmaz.
+# Whitelist sabit: argparse bu metavar isimlerini koddan alıyor, çevirisi yok.
+_METAVAR_NAMES = (
+    "FILE", "PATH", "URL", "URLS", "CODE", "SECONDS",
+    r"CC\[,CC\.\.\.\]",   # --country için özel metavar
+    "N",                   # tek karakter; SADECE bayraktan sonra eşleşir
+)
+_RE_FLAG_WITH_METAVAR = re.compile(
+    r"(--[a-z][\w-]*|-[a-zA-Z])"   # uzun veya kısa bayrak
+    r"(\s+\[?)"                     # boşluk(lar), opsiyonel `[` (örn. [URLS])
+    r"(" + "|".join(_METAVAR_NAMES) + r")"
+    r"(?=[\s,\]\n])"
+)
+# Tek başına bayraklar (metavar'sız). Yukarıdaki combo ile boyanmamış
+# (ANSI escape ile başlayan) eşleşmeleri DIŞLAMAK için lookbehind kullan;
+# aksi halde `\x1b[32m--xxx` içindeki `--xxx` tekrar match olur, iç içe
+# ANSI sarması bozar.
+_RE_LONG_OPT  = re.compile(r"(?<!\x1b\[32m)(--[a-z][\w-]*)")
+# Kısa opsiyon `-X`: önünde kelime/tire olmamalı (kelime ortasındaki tireleri
+# yakalama); sonunda boşluk/virgül/`]`. ANSI tekrar boyamayı engellemek için
+# ayrı bir fixed-width lookbehind ekleniyor. `[` lookbehind'te YASAK DEĞİL —
+# `[-h]`, `[-v]` gibi usage'taki bracket'lı kısa bayraklar da boyanmalı.
+_RE_SHORT_OPT = re.compile(
+    r"(?<![\w-])(?<!\x1b\[32m)(-[a-zA-Z])(?=[\s,\]])"
+)
+# Choices: argparse `{a,b,c}` formatında verir.
+_RE_CHOICES = re.compile(r"(\{[^{}\n]+\})")
+# Default değer parantezi — TR ve EN için tek desen.
+_RE_DEFAULT = re.compile(
+    r"(\((?:varsayılan|default):\s*[^)]+\))", re.IGNORECASE,
+)
+# Örnek komut satırı: epilog'da `  $ ...` formatında basılır.
+_RE_EXAMPLE = re.compile(r"^(  \$ )(.+)$", re.MULTILINE)
+
+
+def _color_enabled() -> bool:
+    """Help çıktısında ANSI renkleri kullanılsın mı?
+
+    https://no-color.org/ konvansiyonu: `NO_COLOR` env var'ı set (boş bile
+    olsa) ise renkleri kapat. Ayrıca stderr TTY değilse (örn. `... 2>file`
+    veya `... | less`) renksiz çıkar — pipe/CI'a ANSI bulaştırma."""
+    if "NO_COLOR" in os.environ:
+        return False
+    return sys.stderr.isatty()
+
+
+def _colorize_help(text: str) -> str:
+    """argparse format_help() çıktısına ANSI renk ekler.
+
+    Sıra önemli:
+      1. DEFAULT — iç metnindeki kelimeleri ileri regex'ler boyamasın diye önce.
+      2. CHOICES — bağımsız, her yerde geçerli.
+      3. FLAG+METAVAR combo — bayrak yeşil, metavar sarı, TEK pass'te.
+      4. Standalone uzun/kısa bayraklar — combo'da yakalanmamış olanlar.
+         Lookbehind sayesinde combo'da zaten boyanmışları tekrar boyamaz.
+      5. SECTION ve USAGE başlıkları — bold cyan.
+      6. Örnek komut satırları — bold green."""
+    text = _RE_DEFAULT.sub(lambda m: f"{_C_DIM}{m.group(1)}{_C_RESET}", text)
+    text = _RE_CHOICES.sub(lambda m: f"{_C_YELLOW}{m.group(1)}{_C_RESET}", text)
+    text = _RE_FLAG_WITH_METAVAR.sub(
+        lambda m: (
+            f"{_C_GREEN}{m.group(1)}{_C_RESET}"
+            f"{m.group(2)}"
+            f"{_C_YELLOW}{m.group(3)}{_C_RESET}"
+        ),
+        text,
+    )
+    text = _RE_LONG_OPT.sub(lambda m: f"{_C_GREEN}{m.group(1)}{_C_RESET}", text)
+    text = _RE_SHORT_OPT.sub(lambda m: f"{_C_GREEN}{m.group(1)}{_C_RESET}", text)
+    text = _RE_USAGE_PREFIX.sub(
+        lambda m: f"{_C_BOLD}{_C_CYAN}{m.group(1)}{_C_RESET}", text,
+    )
+    text = _RE_SECTION.sub(
+        lambda m: f"{_C_BOLD}{_C_CYAN}{m.group(1)}{_C_RESET}", text,
+    )
+    text = _RE_EXAMPLE.sub(
+        lambda m: f"{m.group(1)}{_C_BOLD}{_C_GREEN}{m.group(2)}{_C_RESET}",
+        text,
+    )
+    return text
+
+
 class _HelpFormatter(argparse.RawDescriptionHelpFormatter):
-    """Geniş yardım sütunu + terminal genişliğine uyumlu kaydırma.
+    """Geniş yardım sütunu + terminal genişliğine uyumlu kaydırma + renkler.
 
     argparse default `max_help_position=24` uzun bayrak isimlerinin (örn.
     `--probation-max-skip N`) yardım metnini ikinci satıra atmasına yol açar.
     Burada 32'ye çekiyoruz; çoğu bayrak tek satırda kalıyor. Genişliği de
     terminal'e göre 80-110 arasında klipliyoruz; aşırı geniş ekranlarda satırlar
-    okunamayacak kadar uzamasın."""
+    okunamayacak kadar uzamasın.
+
+    `format_help()` üzerine ANSI renkleri post-process ile enjekte edilir;
+    `NO_COLOR` env var veya TTY-değilse renksiz."""
+
+    def format_help(self) -> str:
+        text = super().format_help()
+        if _color_enabled():
+            text = _colorize_help(text)
+        return text
 
     def __init__(self, prog: str) -> None:
         try:
@@ -1572,7 +1754,8 @@ def main(argv: list[str] | None = None) -> int:
     g_scan.add_argument(
         "--tunnel-test", action=argparse.BooleanOptionalAction, default=True,
         dest="tunnel_test",
-        help=t("cli.help.tunnel_test", url=TUNNEL_TEST_URL),
+        help=t("cli.help.tunnel_test",
+               url=f"{len(TUNNEL_TEST_URLS)} URL'lik havuz, rastgele seçim"),
     )
     g_scan.add_argument(
         "--mitm-test", action=argparse.BooleanOptionalAction, default=True,
