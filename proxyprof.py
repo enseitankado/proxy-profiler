@@ -41,6 +41,7 @@ from i18n import t  # noqa: E402
 _REQUIRED: tuple[tuple[str, str], ...] = (
     ("aiohttp", "aiohttp"),
     ("aiohttp_socks", "aiohttp-socks"),
+    ("aiodns", "aiodns"),
 )
 _GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
 
@@ -87,7 +88,7 @@ def _try_reexec_into_local_venv() -> None:
     if Path(sys.executable) == venv_py:
         return
     probe = subprocess.run(
-        [str(venv_py), "-c", "import aiohttp, aiohttp_socks"],
+        [str(venv_py), "-c", "import aiohttp, aiohttp_socks, aiodns"],
         stderr=subprocess.DEVNULL,
     )
     if probe.returncode == 0:
@@ -104,7 +105,7 @@ def _bootstrap_local_venv(venv_dir: Path, packages: list[str]) -> None:
     if not venv_py.exists():
         # Önce normal (pip dahil) venv oluştur; ensurepip sistemde yoksa
         # --without-pip ile dener ve sonra get-pip.py bootstrap'lar.
-        sys.stderr.write(f"proxyprof: {t('deps.creating_venv', dir=venv_dir)}\n")
+        sys.stderr.write(f"{_paint('proxyprof:', _C_DIM)} {t('deps.creating_venv', dir=venv_dir)}\n")
         rc = subprocess.run(
             [sys.executable, "-m", "venv", str(venv_dir)],
             stderr=subprocess.DEVNULL,
@@ -115,32 +116,32 @@ def _bootstrap_local_venv(venv_dir: Path, packages: list[str]) -> None:
             ).returncode
             if rc != 0 or not venv_py.exists():
                 sys.stderr.write(
-                    f"proxyprof: {t('deps.venv_creation_failed')}\n"
+                    f"{_paint('proxyprof:', _C_DIM)} {t('deps.venv_creation_failed')}\n"
                     f"{t('deps.venv_hint')}\n"
                 )
                 sys.exit(1)
 
     if not (venv_dir / "bin" / "pip").exists():
-        sys.stderr.write(f"proxyprof: {t('deps.downloading', url=_GET_PIP_URL)}\n")
+        sys.stderr.write(f"{_paint('proxyprof:', _C_DIM)} {t('deps.downloading', url=_GET_PIP_URL)}\n")
         try:
             with urllib.request.urlopen(_GET_PIP_URL, timeout=30) as resp:
                 get_pip_src = resp.read()
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             sys.stderr.write(
-                f"proxyprof: {t('deps.download_failed', err=e)}\n"
+                f"{_paint('proxyprof:', _C_DIM)} {t('deps.download_failed', err=e)}\n"
                 f"{t('deps.download_failed_hint')}\n"
             )
             sys.exit(1)
-        sys.stderr.write(f"proxyprof: {t('deps.bootstrapping_pip')}\n")
+        sys.stderr.write(f"{_paint('proxyprof:', _C_DIM)} {t('deps.bootstrapping_pip')}\n")
         if subprocess.run([str(venv_py)], input=get_pip_src).returncode != 0:
-            sys.stderr.write(f"proxyprof: {t('deps.pip_bootstrap_failed')}\n")
+            sys.stderr.write(f"{_paint('proxyprof:', _C_DIM)} {t('deps.pip_bootstrap_failed')}\n")
             sys.exit(1)
 
-    sys.stderr.write(f"proxyprof: {t('deps.installing', pkgs=' '.join(packages))}\n")
+    sys.stderr.write(f"{_paint('proxyprof:', _C_DIM)} {t('deps.installing', pkgs=' '.join(packages))}\n")
     if subprocess.run(
         [str(venv_py), "-m", "pip", "install", "--quiet", *packages]
     ).returncode != 0:
-        sys.stderr.write(f"proxyprof: {t('deps.pip_install_failed')}\n")
+        sys.stderr.write(f"{_paint('proxyprof:', _C_DIM)} {t('deps.pip_install_failed')}\n")
         sys.exit(1)
 
 
@@ -168,7 +169,7 @@ def _ensure_deps() -> None:
 
     if not (sys.stdin.isatty() and sys.stderr.isatty()):
         sys.stderr.write(
-            f"proxyprof: {t('deps.missing', pkgs=pkg_str)}\n"
+            f"{_paint('proxyprof:', _C_DIM)} {t('deps.missing', pkgs=pkg_str)}\n"
             f"{t('deps.install_with', cmd=f'{sys.executable} -m pip install {pkg_str}')}\n"
         )
         sys.exit(1)
@@ -178,7 +179,7 @@ def _ensure_deps() -> None:
     if in_venv:
         # Aktif venv'deyiz — sistem Python'unu kirletme riski yok, direkt pip.
         sys.stderr.write(
-            f"proxyprof: {t('deps.missing', pkgs=pkg_str)}\n"
+            f"{_paint('proxyprof:', _C_DIM)} {t('deps.missing', pkgs=pkg_str)}\n"
             f"{t('deps.active_venv_note', prefix=sys.prefix)}\n"
         )
         if not _prompt(
@@ -186,9 +187,9 @@ def _ensure_deps() -> None:
         ):
             sys.exit(1)
         cmd = [sys.executable, "-m", "pip", "install", "--quiet", *missing]
-        sys.stderr.write(f"proxyprof: {t('deps.running', cmd=' '.join(cmd))}\n")
+        sys.stderr.write(f"{_paint('proxyprof:', _C_DIM)} {t('deps.running', cmd=' '.join(cmd))}\n")
         if subprocess.run(cmd).returncode != 0:
-            sys.stderr.write(f"proxyprof: {t('deps.install_failed')}\n")
+            sys.stderr.write(f"{_paint('proxyprof:', _C_DIM)} {t('deps.install_failed')}\n")
             sys.exit(1)
         os.execv(sys.executable, [sys.executable, *sys.argv])
 
@@ -197,7 +198,7 @@ def _ensure_deps() -> None:
     # get-pip.py ile bootstrap edilir; varsa direkt kullanılır.
     venv_dir = Path(__file__).resolve().parent / ".venv"
     sys.stderr.write(
-        f"proxyprof: {t('deps.missing', pkgs=pkg_str)}\n"
+        f"{_paint('proxyprof:', _C_DIM)} {t('deps.missing', pkgs=pkg_str)}\n"
         f"{t('deps.system_python_note', python=sys.executable)}\n"
         f"{t('deps.auto_setup_intro', dir=venv_dir, pkgs=pkg_str)}\n"
     )
@@ -216,6 +217,7 @@ from aiohttp_socks import ProxyConnector, ProxyType  # noqa: E402
 
 from judges import (  # noqa: E402
     JudgeUnavailable,
+    country_from_trace,
     detect_level,
     extract_country,
     is_judge_behind_cf,
@@ -244,7 +246,8 @@ from reputation import (  # noqa: E402
 )
 
 
-DEFAULT_LEVEL = 1
+DEFAULT_LEVEL = 3   # filtre yok — çalışan tüm proxy'leri tut (kullanıcı
+                    # `--level 1` veya `--level 2` ile daha sıkı süzebilir).
 DEFAULT_CONCURRENCY = 500
 DEFAULT_TIMEOUT = 5.0
 DEFAULT_RETRIES = 1
@@ -280,18 +283,120 @@ TUNNEL_TEST_URLS: tuple[str, ...] = (
 # mevcuttur, 200 döner, UA filtresi uygulamaz, ~200B body sıfır cost'a yakın.
 # Birden fazla farklı CF zone'una karşı test etmek "her CF sitede çalışıyor"
 # güvencesi verir.
-CF_GATEKEEPERS: tuple[str, ...] = (
+#
+# **Tasarım: 2-katman**
+#   1) CF kendi altyapısı — bot-block YAPMAZ, her zaman 200. False-positive
+#      sıfır, ama tek "zone": CF içi → "proxy CF ağına ulaşabiliyor mu" cevabı.
+#   2) Mid-tier dev/SaaS müşterileri — anti-bot agresif değil (büyük marka
+#      değil, scraper hedefi değil), CF üzerinde farklı edge'lerde →
+#      "proxy gerçek bir CF müşterisinin sitesine ulaşabiliyor mu" cevabı.
+#
+# Big-brand'lar (discord, reddit, medium, upwork...) bilinçli olarak dışlandı:
+# yüksek scraping baskısı → CF Bot Fight Mode → /cdn-cgi/trace bile bloklanı-
+# yor → random seçildiğinde sağlam proxy'leri haksızca eler. Discord Firefox
+# TLS fingerprint'ine TCP RST ile cevap veriyor — bot-blok'un kanıtı.
+#
+# **Sağlık testi**: `proxyprof --verify-gatekeepers` her URL'i doğrudan test
+# eder, ölü/bloklu olanları `~/.config/proxyprof/gatekeepers.txt` overlay'ine
+# alive-only liste olarak yazar. Sonraki taramalar overlay varsa onu kullanır.
+CF_GATEKEEPERS_DEFAULT: tuple[str, ...] = (
+    # ============================================================
+    # Tier 1: Cloudflare'in kendi altyapısı (12) — bedrock, ölmez
+    # ============================================================
+    # CF'in kendi domain'leri /cdn-cgi/trace'i hiç disable etmez, bot-block
+    # uygulamaz. Bu URL'ler her zaman 200 döner; auto-verify her zaman geçer.
+    "https://1.1.1.1/cdn-cgi/trace",
+    "https://one.one.one.one/cdn-cgi/trace",
     "https://www.cloudflare.com/cdn-cgi/trace",
+    "https://workers.cloudflare.com/cdn-cgi/trace",
+    "https://cdnjs.cloudflare.com/cdn-cgi/trace",
+    "https://blog.cloudflare.com/cdn-cgi/trace",
+    "https://developers.cloudflare.com/cdn-cgi/trace",
+    "https://docs.cloudflare.com/cdn-cgi/trace",
+    "https://pages.cloudflare.com/cdn-cgi/trace",
+    "https://radar.cloudflare.com/cdn-cgi/trace",
+    "https://speed.cloudflare.com/cdn-cgi/trace",
+    "https://community.cloudflare.com/cdn-cgi/trace",
+
+    # ============================================================
+    # Tier 2: CF müşteri domain'leri (~20) — zone diversity için
+    # ============================================================
+    # Düzgün konfigüre edildikleri sürece /cdn-cgi/trace 200 döner.
+    # NOT: CF müşterileri zamanla /cdn-cgi/trace'i disable edebilir veya auth
+    # arkasına alabilir (bkz. "Çıkarılanlar" listesi). Bu yüzden:
+    #   - Session başında otomatik canlılık kontrolü yapılır (oturum-içi prune)
+    #   - `--verify-gatekeepers` periyodik çalıştırılırsa alive-only overlay
+    #     üretir (~/.config/proxyprof/gatekeepers.txt)
+    #
+    # Tech / developer tools
+    "https://typeform.com/cdn-cgi/trace",
+    "https://calendly.com/cdn-cgi/trace",
     "https://www.discord.com/cdn-cgi/trace",
-    "https://www.reddit.com/cdn-cgi/trace",
+    "https://www.npmjs.com/cdn-cgi/trace",
+    "https://www.algolia.com/cdn-cgi/trace",
+    "https://www.replit.com/cdn-cgi/trace",
+    "https://www.gitter.im/cdn-cgi/trace",
+    # SaaS / CRM / analytics
+    "https://www.zendesk.com/cdn-cgi/trace",
+    "https://www.intercom.com/cdn-cgi/trace",
+    "https://www.mailchimp.com/cdn-cgi/trace",
+    "https://www.hubspot.com/cdn-cgi/trace",
+    "https://www.segment.com/cdn-cgi/trace",
+    "https://www.mixpanel.com/cdn-cgi/trace",
+    "https://www.crisp.chat/cdn-cgi/trace",
+    "https://www.statuspage.io/cdn-cgi/trace",
+    # Content / community / e-commerce
     "https://www.medium.com/cdn-cgi/trace",
     "https://www.udemy.com/cdn-cgi/trace",
     "https://www.patreon.com/cdn-cgi/trace",
     "https://www.kickstarter.com/cdn-cgi/trace",
     "https://www.upwork.com/cdn-cgi/trace",
-    "https://www.zendesk.com/cdn-cgi/trace",
     "https://www.shopify.com/cdn-cgi/trace",
+    "https://www.canva.com/cdn-cgi/trace",
+    "https://www.ghost.org/cdn-cgi/trace",
+    "https://www.framer.com/cdn-cgi/trace",
+
+    # ============================================================
+    # Çıkarılanlar (--verify-gatekeepers ile teyit edildi)
+    # ============================================================
+    # 2026-05-29:
+    #   archlinux.org    → HTTP 404 (CF zone /cdn-cgi/trace'i disable etmiş)
+    #   huggingface.co   → HTTP 401 (CF zone auth gerektirir hale gelmiş)
 )
+
+
+def _gatekeepers_overlay_path() -> Path:
+    """Overlay dosyası yolu: --verify-gatekeepers tarafından yazılır,
+    her tarama başında okunur. Format: # comment'ler atlanır; her satır
+    bir URL."""
+    from reputation import default_db_dir as _ddir
+    return _ddir() / "gatekeepers.txt"
+
+
+def _load_gatekeepers() -> tuple[str, ...]:
+    """Overlay varsa onu döndür, yoksa default listeyi.
+
+    Overlay --verify-gatekeepers ile yaratılır; sadece "alive" URL'leri içerir.
+    Default listeyi kalıcı değiştirmez (kaynak kod stabil kalır), kullanıcı
+    overlay'i silebilir veya elle düzenleyebilir."""
+    overlay = _gatekeepers_overlay_path()
+    if overlay.exists():
+        try:
+            urls: list[str] = []
+            for line in overlay.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    urls.append(line)
+            if urls:
+                return tuple(urls)
+        except OSError:
+            pass
+    return CF_GATEKEEPERS_DEFAULT
+
+
+# Module load anında çözülür. --verify-gatekeepers overlay'i yazdıktan sonra
+# bir sonraki proxyprof çağrısı yeni listeyi görür.
+CF_GATEKEEPERS: tuple[str, ...] = _load_gatekeepers()
 
 # Google connectivity-check endpoint'leri. Android/Chrome captive portal
 # kontrolünün kullandığı /generate_204 path'leri; CF /cdn-cgi/trace'in Google
@@ -379,6 +484,7 @@ class ScanResult:
     mitm_suspected: bool | None = None  # --mitm-test: TLS chain kırık mı (MITM)
     skipped: bool = False            # probe çalıştırılmadan kısayolla skip edildi
     bucket: str | None = None        # reputation bucket (HOT/WARM/NEW/COLD/None)
+    judge_skipped: bool = False      # --no-judge: judge probe atlandı, anonimlik bilgisi yok
 
 
 @dataclass
@@ -418,17 +524,17 @@ def parse_proxies(text: str) -> list[str]:
 def read_proxies(file_arg: str | None) -> list[str]:
     if file_arg in (None, "-", "STDIN"):
         if sys.stdin.isatty():
-            sys.exit(f"proxyprof: {t('input.no_input')}")
+            sys.exit(f"{_paint('proxyprof:', _C_DIM)} {t('input.no_input')}")
         text = sys.stdin.read()
     else:
         try:
             with open(file_arg, encoding="utf-8") as f:
                 text = f.read()
         except OSError as e:
-            sys.exit(f"proxyprof: {t('input.cannot_read', file=file_arg, err=e)}")
+            sys.exit(f"{_paint('proxyprof:', _C_DIM)} {t('input.cannot_read', file=file_arg, err=e)}")
     proxies = parse_proxies(text)
     if not proxies:
-        sys.exit(f"proxyprof: {t('input.no_valid_pairs')}")
+        sys.exit(f"{_paint('proxyprof:', _C_DIM)} {t('input.no_valid_pairs')}")
     return proxies
 
 
@@ -485,6 +591,9 @@ async def probe(
     access_urls: list[str],
     tunnel_test: bool,
     send_identity: bool,
+    no_judge: bool = False,
+    access_timeout: float | None = None,
+    access_strict: bool = False,
 ) -> ScanResult:
     """Bir proxy'yi judge'a yönlendirerek profile et.
 
@@ -501,51 +610,86 @@ async def probe(
     started = time.monotonic()
 
     for attempt in range(retries + 1):
-        connector = ProxyConnector(
-            proxy_type=proxy_type, host=host, port=port, rdns=True,
-        )
+        # `judge_elapsed` = bu attempt'in judge round-trip süresi (TEK HTTP
+        # isteği). SÜRE sütununda gösterilen değer budur — access/tunnel/MITM
+        # probe'larının zamanı dahil DEĞİL. Böylece kullanıcı "bu proxy
+        # gerçekten ne kadar hızlı?" sorusuna sağlıklı cevap alır; total wall
+        # time `time.monotonic() - started` (probe başından retry'lara kadar)
+        # internal metric olarak ScanResult'ta yer almaz.
+        judge_elapsed: float | None = None
         try:
-            async with aiohttp.ClientSession(
-                connector=connector,
-                headers={"User-Agent": USER_AGENT},
-                timeout=aiohttp.ClientTimeout(total=timeout),
-            ) as session:
-                # X-Proxyprof-Proxy: judge'a "ben bu protokolden, bu IP:PORT'tan
-                # geliyorum" der. SADECE kullanıcının trusted listesindeki
-                # domain'lerde olan judge'lara gönderilir (send_identity).
-                # Default güvenli: trusted listesi boşsa header gönderilmez.
-                extra_headers: dict[str, str] = {}
-                if send_identity:
-                    extra_headers["X-Proxyprof-Proxy"] = f"{protocol}://{proxy}"
-                async with session.get(
-                    judge_url, headers=extra_headers,
-                ) as resp:
-                    body = await resp.text(errors="replace")
-
-            elapsed = time.monotonic() - started
-            headers = parse_judge_response(body)
-            if not headers:
-                return ScanResult(
-                    proxy=proxy, ok=False, level=None,
-                    elapsed=elapsed,
-                    error="judge returned unparseable body",
+            if no_judge:
+                # --no-judge: judge probe tamamen atlanır. Anonimlik tespiti
+                # (L1/L2/L2d/L3), çıkış IP'si ve ülke bilgisi yok. Sadece
+                # tunnel/access/mitm testleri çalışır → "proxy ulaşılabilir
+                # ve HTTPS taşıyabiliyor mu" sorusuna yanıt verir.
+                level: int | None = None
+                distorting: bool = False
+                outbound: str | None = None
+                country: str | None = None
+            else:
+                connector = ProxyConnector(
+                    proxy_type=proxy_type, host=host, port=port, rdns=True,
                 )
-            level, distorting = detect_level(headers, public_ip)
-            outbound = remote_addr(headers)
-            country = extract_country(headers)
+                judge_t0 = time.monotonic()
+                async with aiohttp.ClientSession(
+                    connector=connector,
+                    headers={"User-Agent": USER_AGENT},
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as session:
+                    # X-Proxyprof-Proxy: judge'a "ben bu protokolden, bu
+                    # IP:PORT'tan geliyorum" der. SADECE kullanıcının trusted
+                    # listesindeki domain'lerde olan judge'lara gönderilir.
+                    extra_headers: dict[str, str] = {}
+                    if send_identity:
+                        extra_headers["X-Proxyprof-Proxy"] = f"{protocol}://{proxy}"
+                    async with session.get(
+                        judge_url, headers=extra_headers,
+                    ) as resp:
+                        body = await resp.text(errors="replace")
+
+                # Judge round-trip tamamlandı: bu attempt'in canonical "proxy
+                # latency"si. Connector setup'ı dahil ama probe-içi normal
+                # davranış (TCP handshake + HTTP request + response read).
+                judge_elapsed = time.monotonic() - judge_t0
+                headers = parse_judge_response(body)
+                if not headers:
+                    return ScanResult(
+                        proxy=proxy, ok=False, level=None,
+                        elapsed=judge_elapsed,
+                        error="judge returned unparseable body",
+                    )
+                level, distorting = detect_level(headers, public_ip)
+                outbound = remote_addr(headers)
+                country = extract_country(headers)
 
             # Access test: tüm URL'ler pass etmek zorunda. Tek bir hata
             # access_ok'ı False'a düşürür; access_reason ilk başarısız URL'in
             # nedeninin kısa kodu (ACC sütununda gösterilir).
+            #
+            # Side-channel: `/cdn-cgi/trace` URL'leri yanıtın body'sinde
+            # `loc=XX` ile ülke bilgisi taşır. _access_check bunu parse edip
+            # döner; main judge non-CF olsa bile ülke yakalanır. Judge'tan
+            # gelen country önceliklidir (kanonik kaynak); access'ten gelen
+            # sadece judge'da yoksa kullanılır.
             access_ok: bool | None = None
             access_reason: str | None = None
+            access_first_elapsed: float | None = None
             if access_urls:
-                reason = await _access_check(
-                    proxy, proxy_type, access_urls, timeout,
+                # Access için ayrı timeout: judge timeout'tan farklı; default
+                # `timeout × 2`. HTTPS + CONNECT + TLS handshake için 5s tight,
+                # 10s rahat. _apply_protocol_defaults'ta hesaplanır; None ise
+                # fallback olarak judge timeout kullanılır.
+                a_timeout = access_timeout if access_timeout is not None else timeout
+                reason, access_country, access_first_elapsed = await _access_check(
+                    proxy, proxy_type, access_urls, a_timeout,
+                    strict=access_strict,
                 )
                 access_ok = reason is None
                 if reason is not None:
                     access_reason = reason
+                if not country and access_country:
+                    country = access_country
 
             # HTTPS probe: tek istek, iki sonuç (tunnel_ok + mitm_suspected).
             # Üç durum:
@@ -559,7 +703,15 @@ async def probe(
             #      gitti; HTTPS yetisi henüz test edilmedi → _https_probe gerekli.
             tunnel_ok: bool | None = None
             mitm_suspected: bool | None = None
-            judge_is_https = judge_url.lower().startswith("https://")
+            tunnel_elapsed: float | None = None
+            # judge_is_https: judge probe yapıldıysa True/False, atlandıysa False
+            # (no_judge mode'da CONNECT'in judge probe ile kanıtlandığı varsayımı
+            # tutmaz → ayrı _https_probe gerekir).
+            judge_is_https = (
+                not no_judge
+                and judge_url is not None
+                and judge_url.lower().startswith("https://")
+            )
             if tunnel_test:
                 if judge_is_https and protocol not in ("socks4", "socks5"):
                     # Durum 1: judge zaten CONNECT + TLS testini geçti.
@@ -577,13 +729,46 @@ async def probe(
                     else:
                         tunnel_ok = probe_result.tunnel_ok
                     mitm_suspected = probe_result.mitm_suspected
+                    tunnel_elapsed = probe_result.elapsed
+
+            # Access-katmanı MITM tespitini propagate et — kritik güvenlik
+            # düzeltmesi. Tunnel probe küçük bir URL havuzunda test eder ve
+            # MITM proxy o URL'leri beyaz listelemiş olabilir (debug data'da
+            # access fail'in %88'i bu nedenleydi). Access probe gatekeeper
+            # URL'lerine (CF zone'lar) gider; orada MITM yakalanırsa tunnel
+            # testinin "temiz" verdiği karara güvenmemek lazım. Override:
+            # mitm_suspected=True. Tunnel hâlâ True kalır (CONNECT açılıyor,
+            # sadece TLS chain bozuluyor) — eski tunnel probe MITM bulgu
+            # semantiği ile aynı.
+            if access_reason == "mitm":
+                mitm_suspected = True
+
+            # SÜRE sütunu için canonical değer: tek temsil edici HTTP round-trip
+            # süresi (proxy'nin gerçek latency'sini yansıtsın). Öncelik sırası:
+            #   1) judge_elapsed (en stabil; her başarılı tarama yapar)
+            #   2) access_first_elapsed (no_judge mode'da fallback)
+            #   3) tunnel_elapsed (no_judge + no_access; nadir kombinasyon)
+            #   4) Total wall (hiçbir probe çalışmadıysa, teorik fallback)
+            # Hiçbir durumda access'in 3 probe'unun + tunnel'ın TOPLAMı SÜRE'ye
+            # konmaz — eskisi gibi 1s'lik bir proxy'yi 3s gibi gösteren kirli
+            # metrikten kurtulduk.
+            probe_elapsed = (
+                judge_elapsed
+                if judge_elapsed is not None
+                else access_first_elapsed
+                if access_first_elapsed is not None
+                else tunnel_elapsed
+                if tunnel_elapsed is not None
+                else time.monotonic() - started
+            )
 
             return ScanResult(
                 proxy=proxy, ok=True, level=level, distorting=distorting,
                 outbound_ip=outbound, country=country,
-                elapsed=time.monotonic() - started,
+                elapsed=probe_elapsed,
                 access_ok=access_ok, access_reason=access_reason,
                 tunnel_ok=tunnel_ok, mitm_suspected=mitm_suspected,
+                judge_skipped=no_judge,
             )
 
         # aiohttp_socks/python_socks kendi istisna hiyerarşisini fırlatır
@@ -654,9 +839,19 @@ _DEBUG: _DebugLogger | None = None
 
 async def _access_check_one(
     proxy: str, proxy_type: ProxyType, url: str, timeout: float,
-) -> str | None:
-    """Tek bir gatekeeper URL'e proxy üzerinden istek at. None=geçti,
-    str=fail reason kodu. Debug açıksa her attempt'i log'lar."""
+) -> tuple[str | None, str | None, float]:
+    """Tek bir gatekeeper URL'e proxy üzerinden istek at.
+
+    Returns:
+        (fail_reason, country, elapsed)
+          fail_reason: None=geçti, str=hata kodu (to/err/?/<HTTP_N>)
+          country:     URL `/cdn-cgi/trace` ise ve body'de `loc=XX` varsa
+                       proxy'nin çıkış ülke kodu; aksi halde None.
+          elapsed:     Bu probe'un tek round-trip süresi (saniye).
+                       Probe'lar arası ortalama değil, sadece bu istek.
+
+    Debug açıksa her attempt'i log'lar.
+    """
     host, _, port_str = proxy.partition(":")
     debug = _DEBUG is not None
     started = time.monotonic()
@@ -667,6 +862,12 @@ async def _access_check_one(
         "ua": USER_AGENT,
     }
     fail_reason: str | None = None
+    country: str | None = None
+    # CF /cdn-cgi/trace endpoint'lerinden body parse edip `loc=XX` çekeceğiz —
+    # ek istek değil, mevcut response'tan side-channel bilgi. Sadece bu pattern
+    # için body okunur; diğer access URL'leri (Google /generate_204 vs custom)
+    # ek bandwidth harcamaz.
+    is_trace_endpoint = "/cdn-cgi/trace" in url
     try:
         connector = ProxyConnector(
             proxy_type=proxy_type, host=host, port=int(port_str), rdns=True,
@@ -678,25 +879,53 @@ async def _access_check_one(
         ) as session:
             async with session.get(url, allow_redirects=True) as resp:
                 rec["status"] = resp.status
+                # Body okuma kararı: debug açıksa her zaman, değilse SADECE
+                # trace endpoint + 2xx için (country extraction). 4xx/5xx'te
+                # body parse etmek anlamsız (CF challenge HTML olabilir).
+                body_text: str | None = None
+                want_body = debug or (
+                    is_trace_endpoint and 200 <= resp.status < 300
+                )
+                if want_body:
+                    try:
+                        body_text = await resp.text(errors="replace")
+                    except Exception as be:  # noqa: BLE001
+                        rec["body_read_error"] = f"{type(be).__name__}: {be}"[:200]
                 if debug:
-                    # CF + origin teşhisi için önemli header'lar
                     rec["server"] = resp.headers.get("Server")
                     rec["cf_ray"] = resp.headers.get("CF-Ray")
                     rec["cf_cache_status"] = resp.headers.get("CF-Cache-Status")
                     rec["content_type"] = resp.headers.get("Content-Type")
                     rec["content_length"] = resp.headers.get("Content-Length")
                     rec["url_final"] = str(resp.url)
-                    try:
-                        body = await resp.text(errors="replace")
-                        rec["body_snippet"] = body[:300]
-                    except Exception as be:  # noqa: BLE001
-                        rec["body_read_error"] = f"{type(be).__name__}: {be}"[:200]
+                    if body_text is not None:
+                        rec["body_snippet"] = body_text[:300]
                 if not (200 <= resp.status < 400):
                     fail_reason = str(resp.status)
+                elif is_trace_endpoint and body_text:
+                    country = country_from_trace(body_text)
+                    if debug:
+                        rec["country"] = country
     except (asyncio.TimeoutError, TimeoutError) as e:
         rec["error_class"] = type(e).__name__
         rec["error_msg"] = str(e)[:200]
         fail_reason = "to"
+    # MITM tespiti — ClientOSError'dan ÖNCE özel yakala. ClientSSLError
+    # ClientOSError'ın alt sınıfı olduğu için sıra önemli. CERTIFICATE_
+    # VERIFY_FAILED imzası varsa proxy MITM yapıyor → fail_reason="mitm"
+    # (sıradan "err" değil) → probe() seviyesinde mitm_suspected=True'ya
+    # propagate edilir → MITM YOK sütunu × olur.
+    except aiohttp.ClientConnectorCertificateError as e:
+        rec["error_class"] = type(e).__name__
+        rec["error_msg"] = str(e)[:200]
+        fail_reason = "mitm"
+    except aiohttp.ClientSSLError as e:
+        rec["error_class"] = type(e).__name__
+        rec["error_msg"] = str(e)[:200]
+        if "certificate_verify_failed" in str(e).lower() or "cert" in str(e).lower():
+            fail_reason = "mitm"
+        else:
+            fail_reason = "err"  # SSL ama cert hatası değil (protocol mismatch vb.)
     except (
         aiohttp.ClientConnectorError,
         aiohttp.ServerDisconnectedError,
@@ -706,43 +935,98 @@ async def _access_check_one(
     ) as e:
         rec["error_class"] = type(e).__name__
         rec["error_msg"] = str(e)[:200]
-        fail_reason = "err"
+        # Debug log'da gözlemlenmiş kalıp: aiohttp bazen cert hatasını düz
+        # ClientOSError olarak sarmalıyor (özellikle SOCKS5+CONNECT akışında
+        # python-socks katmanı arası). Mesajdan ek tespit yapalım.
+        if "certificate_verify_failed" in str(e).lower():
+            fail_reason = "mitm"
+            rec["mitm_detected_in_oserror"] = True
+        else:
+            fail_reason = "err"
     except Exception as e:  # noqa: BLE001
         rec["error_class"] = type(e).__name__
         rec["error_msg"] = str(e)[:200]
         fail_reason = "?"
 
-    rec["elapsed"] = round(time.monotonic() - started, 3)
+    elapsed = time.monotonic() - started
+    rec["elapsed"] = round(elapsed, 3)
     rec["fail_reason"] = fail_reason
     if debug and _DEBUG is not None:
         _DEBUG.log(**rec)
-    return fail_reason
+    return fail_reason, country, elapsed
 
 
 async def _access_check(
     proxy: str, proxy_type: ProxyType, urls: list[str], timeout: float,
-) -> str | None:
-    """Tüm URL'lere erişiyor mu? None = hepsi geçti.
+    strict: bool = False,
+) -> tuple[str | None, str | None, float | None]:
+    """Gatekeeper URL'lerine erişiyor mu? `(reason, country, fastest_elapsed)`.
 
-    Geçmedi ise ilk başarısız URL'in nedeni kısa kod olarak döner:
-      "to"  → istek timeout'a çakıldı (proxy yavaş ya da CF edge'e ulaşamadı)
-      "<N>" → 3 haneli HTTP status (örn. "403" = CF Bot Mgmt yasakladı,
-              "503" = CF challenge / Turnstile, "429" = rate limit, "502"/
-              "504" = upstream çürük). Status koddan kullanıcı captcha/yasak
-              ayrımını yapabilir.
-      "err" → bağlantı/proxy kaynaklı IO hatası (ServerDisconnected, TCP RST)
-      "?"   → sınıflandırılamayan diğer exception
+    İki mod:
+      - **any-of** (default, `strict=False`): En az BİR URL geçtiyse proxy
+        access-OK kabul edilir. 3 farklı CF zone'undan birine ulaşabilen
+        proxy çoğu pratik senaryoda kullanılabilir; tek bir CF zone'da
+        geçici 429/503/edge-yavaşlığı false-fail yaratmaz.
+      - **strict** (`--access-strict`, eski davranış): URL'lerin TÜMÜ geçmek
+        zorunda. Production-kalite seçim için doğru ama kümülatif fail
+        olasılığını şişirir (`0.8³ ≈ %51` etkili başarı).
 
-    ACC sütununda bu kod birebir basılır (3 char), kullanıcı verdict'i tek
-    bakışta yorumlasın.
+    PARALEL execution: asyncio.gather ile tüm probe'lar AYNI ANDA. Sequential
+    yerine paralel olması proxy'ye sürekli akış yerine TEK BURST gösterir →
+    per-source rate limit / connection budget tetiklenmesi azalır. Wall-time
+    da `sum` yerine `max` olur.
 
-    Debug açıksa her URL attempt'i `debug.log`'a JSONL olarak işlenir.
+    reason: None=geçti, str=fail nedeni:
+      "to"=timeout, "<N>"=3 haneli HTTP status, "err"=IO hatası, "?"=diğer
+
+    country: gatekeeper'lardan en az birinden `/cdn-cgi/trace`'in `loc=XX`
+      satırı yakalandıysa ülke kodu. Birden çok URL aynı country verirse
+      ilki kullanılır (CF geo DB tutarlı, consensus gereksiz).
+
+    fastest_elapsed: probe'ların en hızlısının round-trip süresi. SÜRE
+      sütunu için fallback (judge yoksa). Paralel olduğu için "ilk gelen"
+      = "en hızlı" — gerçek minimum latency'yi gösterir.
     """
-    for url in urls:
-        reason = await _access_check_one(proxy, proxy_type, url, timeout)
-        if reason is not None:
-            return reason
-    return None
+    if not urls:
+        return None, None, None
+
+    # Tüm probe'ları aynı anda fırlat — sequential overhead yok.
+    results = await asyncio.gather(
+        *(_access_check_one(proxy, proxy_type, u, timeout) for u in urls),
+    )
+    # results: list of (reason, country, elapsed)
+
+    # Country: ilk valid olanı al (consensus gerekmez).
+    country: str | None = next(
+        (c for _, c, _ in results if c), None,
+    )
+    # Fastest elapsed: en hızlı probe.
+    elapseds = [e for _, _, e in results if e is not None]
+    fastest_elapsed: float | None = min(elapseds) if elapseds else None
+
+    reasons = [r for r, _, _ in results if r is not None]
+    passes = len(results) - len(reasons)
+
+    # MITM ÖNCELİĞİ: herhangi bir probe'da cert verify failure varsa proxy
+    # MITM yapıyor demektir. Bu her iki modda (strict + any-of) **fail**
+    # ile sonuçlanır — bir CF zone için MITM kıran proxy diğerlerini de
+    # potansiyel olarak kırar (operator beyaz liste yapmış olabilir).
+    # Güvenlik kararı semantik geçişinden önce gelir: any-of'taki "1 pass
+    # yeterli" kuralı MITM tespit varsa devreye girmez.
+    if "mitm" in reasons:
+        return "mitm", country, fastest_elapsed
+
+    if strict:
+        # Strict: tüm probe'lar geçmeli. Tek fail bile yeter.
+        if reasons:
+            return reasons[0], country, fastest_elapsed
+        return None, country, fastest_elapsed
+
+    # Any-of (default): en az 1 pass yeterli (MITM zaten yukarıda elendi).
+    if passes > 0:
+        return None, country, fastest_elapsed
+    # Tümü fail — ilk fail nedenini döndür (kullanıcı pattern görsün).
+    return reasons[0], country, fastest_elapsed
 
 
 @dataclass
@@ -763,31 +1047,17 @@ class HttpsProbeResult:
     tunnel_ok: bool
     mitm_suspected: bool
     error_class: str | None = None
+    elapsed: float = 0.0   # bu probe'un tek round-trip süresi
 
 
-async def _https_probe(
-    proxy: str, proxy_type: ProxyType, timeout: float,
+async def _https_probe_one(
+    proxy: str, proxy_type: ProxyType, url: str, timeout: float,
 ) -> HttpsProbeResult:
-    """Tek HTTPS request ile hem CONNECT-tunnel hem MITM testi.
-
-    Strateji:
-      - Default aiohttp davranışı TLS doğrulama AÇIK → MITM proxy'nin fake
-        sertifikası SSL cert hatasıyla yakalanır.
-      - Cert hatası → CONNECT tüneli açıldı (proxy yanıt verdi), TLS başarısız
-        (MITM). Yani: tunnel_ok=True, mitm_suspected=True.
-      - Diğer SSL hataları (protocol mismatch vs.) MITM imzası SAYILMAZ —
-        bunlar proxy'nin TLS implementasyon sorunları olabilir.
-      - Bağlantı/timeout hataları → tunnel_ok=False, mitm_suspected=False.
-    """
+    """Tek bir URL'e karşı HTTPS probe — _https_probe'un işçi parçası."""
     host, _, port_str = proxy.partition(":")
-    # Havuzdan rastgele 1 URL: gstatic.com'u hostname-bazlı bloklayan proxy'ler
-    # apple/firefox/cloudflare endpoint'lerini geçirebilir; tek noktaya bağlı
-    # olmamak false-negative oranını ciddi düşürür.
-    tunnel_url = random.choice(TUNNEL_TEST_URLS)
     debug = _DEBUG is not None
     started = time.monotonic()
-    rec: dict = {"kind": "tunnel", "proxy": proxy, "url": tunnel_url,
-                 "ua": USER_AGENT}
+    rec: dict = {"kind": "tunnel", "proxy": proxy, "url": url, "ua": USER_AGENT}
     connector = ProxyConnector(
         proxy_type=proxy_type, host=host, port=int(port_str), rdns=True,
     )
@@ -798,14 +1068,11 @@ async def _https_probe(
             headers={"User-Agent": USER_AGENT},
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as session:
-            async with session.get(tunnel_url) as resp:
+            async with session.get(url) as resp:
                 rec["status"] = resp.status
                 if debug:
                     rec["server"] = resp.headers.get("Server")
                     rec["cf_ray"] = resp.headers.get("CF-Ray")
-                # Endpoint'ler farklı status döner: 204 (gstatic), 200 (apple,
-                # firefox, cloudflare). 2xx/3xx kabul; aksi durum tunnel açıldı
-                # ama upstream sorunlu demek.
                 if 200 <= resp.status < 400:
                     result = HttpsProbeResult(True, False)
                 else:
@@ -813,8 +1080,6 @@ async def _https_probe(
                         False, False, error_class=f"HTTP{resp.status}",
                     )
     except aiohttp.ClientConnectorCertificateError as e:
-        # Sertifika doğrulama fail oldu: CONNECT açıldı (proxy 200 dönmüş)
-        # ama TLS chain proxy tarafından kırılıyor. MITM imzası.
         rec["error_class"] = type(e).__name__
         rec["error_msg"] = str(e)[:200]
         result = HttpsProbeResult(True, True, error_class="CertError")
@@ -822,22 +1087,108 @@ async def _https_probe(
         rec["error_class"] = type(e).__name__
         rec["error_msg"] = str(e)[:200]
         msg = str(e).lower()
-        # aiohttp bazen CertVerificationError'ı ClientSSLError olarak
-        # sarmalıyor — mesaja bakarak ayırt et.
         if "certificate_verify_failed" in msg or "cert" in msg:
             result = HttpsProbeResult(True, True, error_class="CertError")
         else:
             result = HttpsProbeResult(False, False, error_class="SSL")
+    except aiohttp.ClientOSError as e:
+        # ClientSSLError aslında ClientOSError'ın alt sınıfı — yukarıdaki
+        # blok yakalamadıysa burada kalan ClientOSError varyantları (TCP
+        # reset, EPIPE vb.) düşer. Mesajda "CERTIFICATE_VERIFY_FAILED" ararız
+        # — aiohttp bazen düz ClientOSError olarak da sarmalıyor (özellikle
+        # SOCKS5+CONNECT akışında python-socks katmanı arası).
+        rec["error_class"] = type(e).__name__
+        rec["error_msg"] = str(e)[:200]
+        if "certificate_verify_failed" in str(e).lower():
+            result = HttpsProbeResult(True, True, error_class="CertError")
+        else:
+            result = HttpsProbeResult(False, False, error_class=type(e).__name__)
     except Exception as e:  # noqa: BLE001
         rec["error_class"] = type(e).__name__
         rec["error_msg"] = str(e)[:200]
         result = HttpsProbeResult(False, False, error_class=type(e).__name__)
 
-    rec["elapsed"] = round(time.monotonic() - started, 3)
+    elapsed = time.monotonic() - started
+    rec["elapsed"] = round(elapsed, 3)
     rec["tunnel_ok"] = result.tunnel_ok
     rec["mitm_suspected"] = result.mitm_suspected
     if debug and _DEBUG is not None:
         _DEBUG.log(**rec)
+    result.elapsed = elapsed
+    return result
+
+
+# MITM tespit için kaç URL paralel test edilir. 1 yetersiz (proxy operatörü
+# captive-portal URL'lerini beyaz listeye alabiliyor → MITM kaçırılıyor).
+# 2 paralel, debug verisinde gözlemlenen %68 MITM cluster'ı yakalar.
+_MITM_PROBE_URL_COUNT = 2
+
+
+async def _https_probe(
+    proxy: str, proxy_type: ProxyType, timeout: float,
+) -> HttpsProbeResult:
+    """Çok-URL paralel HTTPS probe — CONNECT-tunnel + MITM testi.
+
+    Strateji (eski tek-URL versiyonundan farkı):
+      - Default aiohttp davranışı TLS doğrulama AÇIK → MITM proxy'nin fake
+        sertifikası SSL cert hatasıyla yakalanır.
+      - {_MITM_PROBE_URL_COUNT} farklı URL'e PARALEL probe (asyncio.gather).
+        Tek URL'lik versiyon, MITM proxy'nin URL beyaz listeleyebilmesi
+        nedeniyle MITM'leri kaçırıyordu (debug'da %88 access fail'in nedeni
+        cert verify failure çıktı — proxy MITM ama tunnel testi temiz
+        gelmişti). Birden fazla URL probe etmek bu beyaz liste atlatma
+        taktiğini kırar.
+      - **Karar mantığı:**
+          - HERHANGİ probe'da cert verify hatası → MITM kesin
+            (tunnel_ok=True, mitm_suspected=True; kalan sonuçlar tunnel_ok
+            açısından değerlendirilmez — güvenlik kararı önceliklidir).
+          - Aksi halde EN AZ BİR probe başarılı → tunnel_ok=True, mitm yok.
+          - Hiçbiri başarısız, cert hatası da yok → tunnel_ok=False (proxy
+            HTTPS taşıyamıyor).
+      - Maliyet: paralel olduğu için wall-time `max(probe_süresi)` ≈ tek
+        URL versiyonu. Sadece toplam bandwidth çift (~10KB → ~20KB per
+        proxy). Tarama tamamında ihmal edilebilir.
+    """
+    if not TUNNEL_TEST_URLS:
+        return HttpsProbeResult(False, False, error_class="no_tunnel_urls")
+
+    k = min(_MITM_PROBE_URL_COUNT, len(TUNNEL_TEST_URLS))
+    urls = random.sample(TUNNEL_TEST_URLS, k=k)
+
+    started = time.monotonic()
+    sub_results = await asyncio.gather(
+        *(_https_probe_one(proxy, proxy_type, u, timeout) for u in urls),
+    )
+    total_elapsed = time.monotonic() - started
+
+    # MITM önceliği: herhangi bir probe cert hatası verdiyse proxy MITM
+    # sayılır — diğer probe'lar başarılı bile olsa (operatör URL whitelist
+    # yapmış olabilir, kalanlarda yakalanır). HTTPS güvenliği açısından
+    # "bazen MITM yapıyor" = "her zaman risk".
+    mitm_hits = [r for r in sub_results if r.mitm_suspected]
+    if mitm_hits:
+        result = HttpsProbeResult(
+            tunnel_ok=True, mitm_suspected=True, error_class="CertError",
+        )
+        result.elapsed = total_elapsed
+        return result
+
+    # MITM yok — en az 1 başarı varsa tunnel_ok=True.
+    any_ok = any(r.tunnel_ok for r in sub_results)
+    if any_ok:
+        result = HttpsProbeResult(tunnel_ok=True, mitm_suspected=False)
+        result.elapsed = total_elapsed
+        return result
+
+    # Hiçbiri başarılı değil ve MITM imzası da yok → tunnel yok.
+    # En bilgi verici error_class'ı seç (ilkini al).
+    err_class = next(
+        (r.error_class for r in sub_results if r.error_class), None,
+    )
+    result = HttpsProbeResult(
+        tunnel_ok=False, mitm_suspected=False, error_class=err_class,
+    )
+    result.elapsed = total_elapsed
     return result
 
 
@@ -870,6 +1221,120 @@ def _self_mem_mb() -> float:
     except (OSError, ValueError, IndexError):
         pass
     return 0.0
+
+
+def _default_route_iface() -> str | None:
+    """Default IPv4 route'un üzerinden internete çıktığı interface adı.
+
+    `/proc/net/route` formatı tab-separated; Destination alanı hex
+    little-endian. 00000000 = 0.0.0.0/0 = default route. VPN tüneli (wg0,
+    tun0) varsa onu döndürür — proxyprof trafiği o tünelden geçtiği için
+    doğrudur. Modem'in fiziksel kabloyu gördüğü değerle 1:1 değildir
+    (VPN encapsulation overhead'i tünel-interface yerine wan-interface'te
+    görülür), ama proxyprof'un ürettiği gerçek byte sayısını verir.
+    """
+    try:
+        with open("/proc/net/route", encoding="utf-8") as f:
+            next(f, None)  # header satırı atla
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2 and parts[1] == "00000000":
+                    return parts[0]
+    except (OSError, StopIteration, IndexError):
+        pass
+    return None
+
+
+def _iface_wan_bytes(iface: str) -> int:
+    """`/proc/net/dev` üzerinden bir interface'in TOPLAM rx+tx byte sayısı.
+
+    Bu ÇIPLAK kablo (wire) byte'ıdır — Ethernet header + IP header + TCP
+    header + TLS records + HTTP payload + retransmissions + ACK/SYN/FIN
+    paketleri hepsi dahil. Modem WAN istatistiklerinde gördüğün değerle
+    aynı semantik (sistem genelinde, sadece bu süreç değil).
+
+    Önemli sınır: aynı makinede başka aktif uygulamalar (browser, sistem
+    güncelleme, bulut yedeği vs.) varsa onların trafiği de bu sayıya dahil
+    edilir. Sadece proxyprof koşuyorsa fark ihmal edilebilir.
+
+    Linux-only — diğer platformlarda 0 döner.
+    """
+    try:
+        with open("/proc/net/dev", encoding="utf-8") as f:
+            for line in f:
+                head, sep, rest = line.partition(":")
+                if not sep or head.strip() != iface:
+                    continue
+                fields = rest.split()
+                if len(fields) < 16:
+                    return 0
+                # Sütun haritası (/proc/net/dev sırası):
+                #   0=rx_bytes 1=rx_packets ... 8=tx_bytes 9=tx_packets ...
+                rx_bytes = int(fields[0])
+                tx_bytes = int(fields[8])
+                return rx_bytes + tx_bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0
+
+
+def _self_net_bytes(iface: str | None = None) -> int:
+    """Network throughput ölçümü için byte sayısı döndür.
+
+    Strateji: WAN interface byte'ı (rx+tx) — modem panel değeriyle uyumlu.
+    Application-level (rchar/wchar) değil çünkü:
+      - TCP/IP/TLS overhead'i kaçırır (proxy taraması: binlerce kısa
+        connection, her birinde TLS handshake = 2-3KiB; ihmal edilemez)
+      - Kullanıcı "modem panelinde gördüğüm hız" diyor — wire-level istiyor
+
+    `iface` None ise default route interface'ini tespit eder. Linux dışı
+    veya tespit başarısızsa 0 döner.
+    """
+    if iface is None:
+        iface = _default_route_iface()
+    if not iface:
+        return 0
+    return _iface_wan_bytes(iface)
+
+
+def _format_throughput(bytes_per_sec: float) -> str:
+    """Bytes/saniye → KiB/s veya MiB/s; sabit 9 karakter genişlikte format.
+
+    Eşik: 1 MiB/s. Altında KiB, üstünde MiB. Birim KiB/MiB (binary 1024 tabanlı,
+    KB/MB ile karıştırılmasın — network throughput için yaygın convention)."""
+    mib_per_sec = bytes_per_sec / (1024 * 1024)
+    if mib_per_sec >= 1.0:
+        return f"{mib_per_sec:5.1f}MiB/s"
+    kib_per_sec = bytes_per_sec / 1024
+    return f"{kib_per_sec:5.1f}KiB/s"
+
+
+def _visual_lines(text: str, width: int) -> int:
+    """Text terminal'de kaç görsel satır kaplar.
+
+    Logical satır (`\\n` ile ayrılmış) terminal genişliğinden uzunsa wrap'lanır
+    ve birden fazla görsel satır olur. ANSI cursor-up komutu görsel satır
+    bazında çalıştığı için clear logic'i için bu hesap gerekli.
+
+    Empty satır 1 görsel satır sayılır. Genişlik 0 veya negatifse fallback
+    olarak sadece logical satır sayar.
+
+    ANSI escape kodları (renk vs.) terminal'de görünmez ama `len()` bunları
+    sayar — strip etmezsek progress satırı genişliği aşıyormuş gibi görünür ve
+    `_clear_progress_block` fazla satır temizleyip yukarıdaki tablo satırlarını
+    yiyebilir.
+    """
+    if width <= 0:
+        return text.count("\n") + 1
+    total = 0
+    for line in text.split("\n"):
+        if not line:
+            total += 1
+        else:
+            visible = _ANSI_RE.sub("", line)
+            # Tavan bölme: len/width yukarı yuvarla; her satır en az 1 görsel
+            total += max(1, (len(visible) + width - 1) // width)
+    return total
 
 
 class LiveTable:
@@ -907,6 +1372,7 @@ class LiveTable:
         "STATUS": ("table.header.status", 7),  # "missing" 7, "elendi"/"seviye"/"eksik" sığar
         "BKT":    ("table.header.bkt",    5),   # HOT/WARM/NEW/COLD 4, SICAK 5
         "PROXY":  ("table.header.proxy",  21),
+        "PROTO":  ("table.header.proto",  6),   # "socks5" 6, header "PROTO" 5
         "LVL":    ("table.header.lvl",    3),
         "OUT":    ("table.header.out",    15),
         "CC":     ("table.header.cc",     16),  # tam isim sığsın ("Birleşik Krallık" 16, "United Kingdom" 14)
@@ -928,8 +1394,21 @@ class LiveTable:
     def __init__(
         self, enabled: bool, total: int, level_max: int = 3,
         access_mode: str = "off", access_count: int = 0,
+        quit_event=None, force_event=None, pause_event=None,
+        protocol: str = "",
         file=sys.stderr,
     ) -> None:
+        # quit_event/force_event: asyncio.Event veya None. 'q' tuşu birinciye
+        # ilk basıldığında quit_event set olur (yumuşak kapanış); ikincide
+        # force_event set olur (anında çıkış). amain bu event'leri scan()'e
+        # geçirerek davranışı kontrol eder. None ise 'q' tuşu işlemsiz.
+        # pause_event: asyncio.Event veya None. SEMANTIK INVERTED — event SET
+        # iken çalışan akış (default), CLEAR iken duraklatılmış. Worker'lar
+        # `await pause_event.wait()` ile devam sinyalini bekler. 'p' tuşu
+        # toggle eder. None ise 'p' işlemsiz.
+        self.quit_event = quit_event
+        self.force_event = force_event
+        self.pause_event = pause_event
         self.file = file
         self.enabled = enabled
         # ANSI cursor manipülasyonu yalnız TTY'de güvenli; pipe/file'a yazarken
@@ -945,12 +1424,39 @@ class LiveTable:
         # ne testi yapıldığını sürekli görür.
         self.access_mode = access_mode
         self.access_count = access_count
+        # Aktif tarama protokolü (http/https/socks4/socks5). Her tablo satırında
+        # sabit bir sütun olarak gösterilir — kullanıcı output'u kaydedip sonra
+        # baktığında hangi protokolün test edildiğini satır bazında görür.
+        self.protocol = protocol
+        # Footer (progress'in altındaki açıklama) toggle durumu. Default kapalı:
+        # tek-satır 'd ile aç' ipucu. 'd' tuşuna basınca tam legend açılır;
+        # tekrar 'd' → kapanır. Klavye listener aktif değilse (silent/non-TTY)
+        # `_keyboard_attached=False` → tam legend her zaman.
+        self.show_legend = False
+        self._keyboard_attached = False
+        self._loop = None
+        self._orig_term_attrs = None
         self.count = 0
+        # ok_count = DURUM="iyi" (output'a yazılacak); drop_count = probe
+        # başarılı ama filtre/eksik nedeniyle output'a YAZILMAYAN (elendi/
+        # eksik/seviye). Toplam: ok_count + drop_count = "probe yanıtlandı".
         self.ok_count = 0
+        self.drop_count = 0
         self.fail_count = 0
         self.skip_count = 0
+        # # sütunu için tablodaki satır numarası — `r.ok` her başarılı probe'
+        # da artar (DURUM ne olursa olsun). ok_count'tan ayrı; o sadece
+        # output'a yazılan "iyi" sayısı.
+        self._table_row = 0
         self._headered = False
         self._progress_drawn = False
+        # Fail/skip update'leri için redraw throttle penceresi (saniye).
+        # Quit drain sırasında binlerce skipped update mikrosaniyeler içinde
+        # gelirse her birinin clear+redraw yapması ekranı titretir; throttle
+        # ile maksimum ~20fps render → titreşim olmadan counter ilerler.
+        # OK satırları HER ZAMAN render edilir (yeni başarı görünmeli).
+        self._render_throttle = 0.05
+        self._last_render = 0.0
         # Son header'dan beri kaç OK satır yazıldı — HEADER_REPEAT'e ulaşınca
         # bir alt-header bloğu (separator + label row + separator) yeniden
         # basılır ve sayaç sıfırlanır.
@@ -968,28 +1474,50 @@ class LiveTable:
         self._started = time.monotonic()
         # Progress satırı için CPU kümül başlangıcı — sürekli ortalama göster.
         self._start_cpu_time = _self_cpu_time()
+        # Network throughput: WAN interface bytes (modem panel ile uyumlu, tüm
+        # protokol katmanları dahil). Default route interface'ini bir kez
+        # tespit edip cache'liyoruz — her progress update'inde /proc/net/route
+        # parse etmeye gerek yok. Tarama ortasında route değişirse (VPN
+        # connect/disconnect) cached iface yanıltıcı olabilir; nadir senaryo.
+        self._net_iface = _default_route_iface()
+        self._last_net_bytes = _self_net_bytes(self._net_iface)
+        self._last_net_time = self._started
+        # Cache: sample throttling sırasında her progress update yeni ölçüm
+        # YAPMADAN bu değeri döndürür. 500+ probe/sn akışında /proc'u 1ms
+        # aralıkla okumak NOISE üretir; pencere açılana kadar son hesaplanan
+        # bps kullanılır.
+        self._cached_net_bps: float = 0.0
 
     def _all_widths(self) -> list[int]:
         return list(self._cols.values())
 
     def _border(self, left: str, mid: str, right: str) -> str:
-        return left + mid.join("─" * (w + 2) for w in self._all_widths()) + right
+        border = left + mid.join("─" * (w + 2) for w in self._all_widths()) + right
+        return _paint(border, _C_DIM)
 
     def _row(self, cells: list[str]) -> str:
         widths = self._all_widths()
+        col_names = list(self._cols.keys())
         parts = []
-        for i, (c, w) in enumerate(zip(cells, widths)):
-            s = c if len(c) <= w else c[: w - 1] + "…"
-            # # ve TIME sağa yaslı, geri kalanlar sola
-            col_name = list(self._cols.keys())[i]
+        for col_name, c, w in zip(col_names, cells, widths):
+            # Truncate visible width'e göre — ANSI escape'leri saymadan kıyas.
+            if _visible_len(c) > w:
+                plain = _strip_ansi(c)
+                c = plain[: w - 1] + "…"
+            # # ve TIME sağa yaslı, geri kalanlar sola.
             if col_name in ("#", "TIME"):
-                parts.append(f" {s:>{w}} ")
+                cell = _pad_right(c, w)
             else:
-                parts.append(f" {s:<{w}} ")
-        return "│" + "│".join(parts) + "│"
+                cell = _pad_left(c, w)
+            parts.append(f" {cell} ")
+        sep = _paint("│", _C_DIM)
+        return sep + sep.join(parts) + sep
 
     def _emit_header(self) -> None:
-        labels = [self._labels[code] for code in self._cols.keys()]
+        labels = [
+            _paint(self._labels[code], _C_BOLD, _C_CYAN)
+            for code in self._cols.keys()
+        ]
         print(self._border("┌", "┬", "┐"), file=self.file)
         print(self._row(labels), file=self.file)
         print(self._border("├", "┼", "┤"), file=self.file)
@@ -998,7 +1526,11 @@ class LiveTable:
     def _progress_line(self) -> str:
         pct = self.count / self.total if self.total else 1.0
         filled = int(self.BAR_WIDTH * pct)
-        bar = "█" * filled + "░" * (self.BAR_WIDTH - filled)
+        # Bar: dolu kısım cyan (genişledikçe ilerleme), boş dim (henüz).
+        bar = (
+            _paint("█" * filled, _C_CYAN)
+            + _paint("░" * (self.BAR_WIDTH - filled), _C_DIM)
+        )
         digits = len(str(self.total))
         elapsed = time.monotonic() - self._started
         # Anlık throughput: toplam proxy / geçen süre. İlk birkaç ms'de
@@ -1010,20 +1542,62 @@ class LiveTable:
         # gerçek paralelizmı gösterir.
         cpu_pct = ((_self_cpu_time() - self._start_cpu_time) / wall) * 100
         mem_mb = _self_mem_mb()
-        return t(
+        # Network throughput — sample throttling ile noise'suz hesap.
+        # Wire-level (rx+tx, tüm protokol katmanları dahil) → modem panel
+        # değeri ile karşılaştırılabilir.
+        #
+        # Sorun: 500+ probe/sn finish hızıyla _progress_line çağrıldığında her
+        # çağrıda /proc okuyup delta hesaplamak bps'i mahveder — dt~1-5ms,
+        # çoğu window'da kernel sayacı henüz güncellenmemiş = 0 byte = 0 bps,
+        # arada sırada bir burst = milyonlarca bps. Stabil bps istiyoruz.
+        #
+        # Çözüm: en az NET_SAMPLE_INTERVAL aralıkla yeni ölçüm. Bu süre
+        # dolmamışsa son hesaplanan bps cache'den döndürülür. 500ms = göze
+        # stabil + 500+ probe'un birikmiş trafiğine yetecek pencere.
+        NET_SAMPLE_INTERVAL = 0.5
+        now_mono = time.monotonic()
+        dt = now_mono - self._last_net_time
+        if dt >= NET_SAMPLE_INTERVAL:
+            now_net = _self_net_bytes(self._net_iface)
+            self._cached_net_bps = max(0, now_net - self._last_net_bytes) / dt
+            self._last_net_bytes = now_net
+            self._last_net_time = now_mono
+        net_str = _format_throughput(self._cached_net_bps)
+        line = t(
             "progress.format",
             bar=bar, pct=pct * 100,
             done=self.count, digits=digits, total=self.total,
-            ok=self.ok_count, fail=self.fail_count, skip=self.skip_count,
-            rate=rate, cpu=cpu_pct, mem=mem_mb, elapsed=elapsed,
+            ok=self.ok_count, drop=self.drop_count,
+            fail=self.fail_count, skip=self.skip_count,
+            rate=rate, cpu=cpu_pct, mem=mem_mb, net=net_str,
+            elapsed=elapsed,
         )
+        # Sayaçları semantik renkle vurgula: iyi/ok yeşil-bold (output'a
+        # girdi), elendi/dropped sarı (probe ok ama filtre düşürdü), hata/fail
+        # kırmızı, atlanan/skip dim. Sadece rakamları boyar; etiket + padding
+        # aynen kalır → progress satırının kolon hizası korunur.
+        if _color_enabled():
+            line = re.sub(
+                r"(iyi:|ok:)(\d+)",
+                lambda m: m.group(1) + _paint(m.group(2), _C_BOLD, _C_GREEN),
+                line,
+            )
+            line = re.sub(
+                r"(elendi:|dropped:)(\d+)",
+                lambda m: m.group(1) + _paint(m.group(2), _C_YELLOW), line,
+            )
+            line = re.sub(
+                r"(hata:|fail:)(\d+)",
+                lambda m: m.group(1) + _paint(m.group(2), _C_RED), line,
+            )
+            line = re.sub(
+                r"(atlanan:|skip:)(\d+)",
+                lambda m: m.group(1) + _paint(m.group(2), _C_DIM), line,
+            )
+        return line
 
     def _progress_legend(self) -> str:
-        """Progress'in ALTINDA her güncellemede yazılan açıklama satırı.
-
-        Seviye kodlarının (L1/L2/L2d/L3) tam karşılıklarını ve sütun
-        değerlerinin anlamını sürekli görünür tutar — kullanıcı tarama
-        sırasında tabloya bakarak hatırlamak zorunda kalmaz.
+        """Tam legend metni — seviye kodları (L1/L2/L2d/L3) + sütun anlamları.
 
         ERİŞİM satırı dinamik: hangi gatekeeper preset'inin aktif olduğuna
         göre (CloudFlare WAF/Bot, Google connectivity, kullanıcı listesi, ya da
@@ -1035,13 +1609,48 @@ class LiveTable:
             ACCESS_MODE_GOOGLE: "progress.legend_access_google",
             ACCESS_MODE_CUSTOM: "progress.legend_access_custom",
         }.get(self.access_mode, "progress.legend_access_off")
-        return base + "\n" + t(access_key, n=self.access_count)
+        text = base + "\n" + t(access_key, n=self.access_count)
+        return _colorize_legend(text)
+
+    def _progress_footer(self) -> str:
+        """Progress'in altında basılacak metin — durum bağımlı.
+
+        Öncelik sırası:
+          1. force_event set → "Anında çıkış..." (tek satır, en kritik mesaj)
+          2. quit_event set  → "Yumuşak kapanış... ('q' tekrar = anında çık)"
+          3. pause cleared   → "Duraklatıldı ('p' devam et)" — kullanıcı yeni
+             task dispatch edilmediğini hemen görsün
+          4. show_legend açık → tam legend + "'d' ile gizle" hint
+          5. default → tek-satır "'d' detay, 'p' duraklat, 'q' çıkış" hint
+
+        Quit/pause modlarında legend gizlenir; kullanıcının dikkati kritik
+        durumdan dağılmasın. Klavye listener aktif değilse (silent / non-TTY
+        / cbreak desteklemeyen terminal) her durumda tam legend gösterilir —
+        'd'/'p'/'q' zaten çalışmaz."""
+        if not self._keyboard_attached:
+            return self._progress_legend()
+        if self.force_event is not None and self.force_event.is_set():
+            return t("progress.quit_forcing")
+        if self.quit_event is not None and self.quit_event.is_set():
+            return t("progress.quit_requested")
+        if self.pause_event is not None and not self.pause_event.is_set():
+            return t("progress.paused")
+        if self.show_legend:
+            return self._progress_legend() + "\n" + t("progress.hint_press_d_hide")
+        return t("progress.hint_press_dpq")
 
     def _clear_progress_block(self) -> None:
         """En alttaki çok-satırlı progress block'u ANSI ile temizle.
 
-        Block = 1 (top padding) + 1 (bar) + N (legend) + 1 (bottom padding).
-        Legend i18n dize'sinde `\\n` sayısı + 1 kadar satır kapsar.
+        Block = 1 (top padding) + bar (görsel) + 1 (mid pad) + legend
+        (görsel) + 1 (bottom padding). "Görsel satır" = wrap dahil; uzun
+        legend satırı dar terminal'de wrap olduğunda logical newline
+        sayısından FAZLA görsel satır kaplar.
+
+        Eski versiyon `.count("\\n") + 1` ile logical line sayardı; wrap'lı
+        satırların artığı her clear'de M+visual_lines-cleared kadar artık
+        bırakırdı → ekrana boş satırlar birikirdi. Şu an `_visual_lines`
+        terminal genişliğine göre gerçek görsel satır sayısını döner.
 
         Cursor bottom padding satırının başında varsayılır (block yazıldıktan
         sonra son `\\n` cursor'u oraya bırakır):
@@ -1049,17 +1658,48 @@ class LiveTable:
           (\\033[A\\r\\033[K)*k → k kez "bir satır yukarı, sil"
         Sonuç: cursor top padding satırı başında, tüm block boş.
         """
-        legend_lines = self._progress_legend().count("\n") + 1
-        # bar + legend + 3 padding (top + mid + bottom blank)
-        total_lines = 1 + legend_lines + 3
+        width = shutil.get_terminal_size((80, 24)).columns
+        bar_visual = _visual_lines(self._progress_line(), width)
+        # Footer = ya tek-satır hint ya da tam legend (toggle'a bağlı). Aynı
+        # render path'inde çiziliyor; clear için aynı footer'ı kullanırız.
+        footer_visual = _visual_lines(self._progress_footer(), width)
+        # padding satırları boş → her zaman 1 görsel satır
+        total_lines = bar_visual + footer_visual + 3
         parts = ["\r\033[K"]
         parts.extend(["\033[A\r\033[K"] * (total_lines - 1))
         self.file.write("".join(parts))
 
+    def _classify_status(self, r: ScanResult) -> str:
+        """ScanResult → DURUM kodu ("ok"/"filter"/"level"/"missing").
+
+        update() ve emit aynı kararı kullansın diye tek nokta — sayaçlar
+        ile DURUM hücresinin tutarlı olmasını garanti eder.
+        Sadece `r.ok=True` için anlamlı; caller kontrol etmeli.
+        """
+        if r.outbound_ip is None and not r.judge_skipped:
+            return "missing"
+        if (
+            (r.access_ok is False)
+            or (r.tunnel_ok is False)
+            or (r.mitm_suspected is True)
+        ):
+            return "filter"
+        if r.level is not None and r.level > self.level_max:
+            return "level"
+        return "ok"
+
     def update(self, r: ScanResult) -> None:
         self.count += 1
         if r.ok:
-            self.ok_count += 1
+            # Probe yanıt verdi — DURUM hesabına göre output'a giriyor mu,
+            # yoksa filtre düşürdü mü ayır. Aksi halde "iyi:N" sayacı
+            # tablodaki DURUM=iyi satır sayısıyla tutmazdı.
+            status = self._classify_status(r)
+            if status == "ok":
+                self.ok_count += 1
+            else:
+                self.drop_count += 1
+            self._table_row += 1
         elif r.skipped:
             # IP-poison erken-atlama; sayım gerçek fail'lerden ayrı tutulur
             # ki kullanıcı "kaç port'u test bile etmediğimi" görebilsin.
@@ -1069,6 +1709,19 @@ class LiveTable:
 
         if not self.enabled:
             return
+
+        # Render throttle: OK update'leri (tabloya yeni satır ekler) her zaman
+        # çiz — kullanıcı yeni başarılı proxy'yi anında görmek ister. Fail/skip
+        # update'leri sadece counter'ı ilerletir; rate çok yüksek olduğunda
+        # (özellikle 'q' sonrası kuyruk drain'inde binlerce skipped/saniye)
+        # throttle'la → max ~20fps, titreşim olmaz. Son tick atlansa bile
+        # finish() doğru final state'i yazar.
+        if not r.ok and self.use_ansi:
+            now = time.monotonic()
+            if (now - self._last_render) < self._render_throttle:
+                return
+            self._last_render = now
+
         if not self._headered:
             self._emit_header()
             self._headered = True
@@ -1089,57 +1742,82 @@ class LiveTable:
             #   3) testler geçti AMA anonimlik seviyesi level_max'tan yüksek
             #      → "level" (stdout'a yazılmayacak, kullanıcı bilmeli)
             #   4) hepsi tamam → "ok"
-            if r.outbound_ip is None:
-                status = t("table.status.unknown")
-            elif (
-                (r.access_ok is False)
-                or (r.tunnel_ok is False)
-                or (r.mitm_suspected is True)
-            ):
-                status = t("table.status.filter")
-            elif r.level is not None and r.level > self.level_max:
-                status = t("table.status.level")
-            else:
-                status = t("table.status.ok")
+            # --no-judge mode'da outbound_ip her zaman None (judge yok),
+            # bu "eksik" tetiklemez; status sadece tunnel/access/mitm'e
+            # dayanır.
+            # STATUS rengi: ok=yeşil-bold, filter/level=sarı, missing=kırmızı.
+            # `_classify_status` ile update()'in saydığı kategoriyi aynen al;
+            # böylece tablodaki DURUM ile progress sayıcılar tutarlı kalır.
+            status_code = self._classify_status(r)
+            _STATUS_COLOR = {
+                "missing": (t("table.status.unknown"), (_C_RED,)),
+                "filter":  (t("table.status.filter"),  (_C_YELLOW,)),
+                "level":   (t("table.status.level"),   (_C_YELLOW,)),
+                "ok":      (t("table.status.ok"),      (_C_BOLD, _C_GREEN)),
+            }
+            _label, _codes = _STATUS_COLOR[status_code]
+            status = _paint(_label, *_codes)
+            # SEVİYE: L1 yeşil (elite), L2 sarı (anonim), L2d magenta (distorting),
+            # L3 kırmızı (transparan), yoksa dim çizgi.
             if r.level == 1:
-                lvl = "L1"
+                lvl = _paint("L1", _C_GREEN)
             elif r.level == 2:
-                lvl = "L2d" if r.distorting else "L2"
+                if r.distorting:
+                    lvl = _paint("L2d", _C_MAGENTA)
+                else:
+                    lvl = _paint("L2", _C_YELLOW)
             elif r.level == 3:
-                lvl = "L3"
+                lvl = _paint("L3", _C_RED)
             else:
-                lvl = "—"
+                lvl = _paint("—", _C_DIM)
 
             def _mark(v: bool | None) -> str:
                 if v is None:
-                    return "—"
-                return "✓" if v else "×"
+                    return _paint("—", _C_DIM)
+                return _paint("✓", _C_GREEN) if v else _paint("×", _C_RED)
 
+            # BUCKET rengi sıcaklık-skalası: HOT kırmızı, WARM sarı, NEW cyan,
+            # COLD mavi. Operatör tabloya bakıp dağılımı hızla görür.
+            _BUCKET_COLOR = {
+                BUCKET_HOT:  _C_RED,
+                BUCKET_WARM: _C_YELLOW,
+                BUCKET_NEW:  _C_CYAN,
+                BUCKET_COLD: _C_BLUE,
+            }
             bkt_key = self._BUCKET_KEY.get(r.bucket or "")
-            bkt = t(bkt_key) if bkt_key else "—"
+            if bkt_key:
+                bkt = _paint(t(bkt_key), _BUCKET_COLOR.get(r.bucket or "", _C_DIM))
+            else:
+                bkt = _paint("—", _C_DIM)
             # MITM kolonu: True = TLS chain kırık (kırmızı bayrak). Mantıken
             # ters: ✓ = MITM YOK (güvenli), × = MITM şüphesi. _mark'a
             # `not mitm_suspected` veriyoruz ki ✓ = iyi semantiği kalsın.
-            mitm_mark = (
-                "—" if r.mitm_suspected is None
-                else ("✓" if not r.mitm_suspected else "×")
-            )
+            if r.mitm_suspected is None:
+                mitm_mark = _paint("—", _C_DIM)
+            elif not r.mitm_suspected:
+                mitm_mark = _paint("✓", _C_GREEN)
+            else:
+                mitm_mark = _paint("×", _C_RED)
             # ACC: ✓ (geçti) / 3 char reason kod (403, 503, to, err, ?) / —
             # kod = _access_check'in ilk başarısız URL için döndürdüğü neden.
             if r.access_ok is None:
-                acc_cell = "—"
+                acc_cell = _paint("—", _C_DIM)
             elif r.access_ok:
-                acc_cell = "✓"
+                acc_cell = _paint("✓", _C_GREEN)
             else:
-                acc_cell = r.access_reason or "×"
+                acc_cell = _paint(r.access_reason or "×", _C_RED)
             cells = [
-                f"{self.count}/{self.total}",
+                # # sütunu = tablodaki satır sırası (1, 2, 3, ...). Her r.ok
+                # için 1 artar (DURUM ne olursa olsun); progress sayacındaki
+                # iyi/elendi ayrımıyla karışmasın.
+                _paint(str(self._table_row), _C_DIM),
                 status,
                 bkt,
-                r.proxy,
+                _paint(r.proxy, _C_CYAN),
+                _paint(self.protocol or "—", _C_DIM),
                 lvl,
-                r.outbound_ip or "—",
-                i18n.country_name(r.country) if r.country else "—",
+                _paint(r.outbound_ip, _C_CYAN) if r.outbound_ip else _paint("—", _C_DIM),
+                i18n.country_name(r.country) if r.country else _paint("—", _C_DIM),
                 f"{r.elapsed:.1f}s",
                 _mark(r.tunnel_ok),
                 mitm_mark,
@@ -1149,7 +1827,10 @@ class LiveTable:
             # bloğunu yeniden bas. Kullanıcı uzun taramalarda terminal
             # scroll'ladıktan sonra sütun adlarına tekrar bakabilir.
             if self._rows_since_header >= self.HEADER_REPEAT:
-                labels = [self._labels[code] for code in self._cols.keys()]
+                labels = [
+                    _paint(self._labels[code], _C_BOLD, _C_CYAN)
+                    for code in self._cols.keys()
+                ]
                 self.file.write(self._border("├", "┼", "┤") + "\n")
                 self.file.write(self._row(labels) + "\n")
                 self.file.write(self._border("├", "┼", "┤") + "\n")
@@ -1164,29 +1845,167 @@ class LiveTable:
         if self.use_ansi:
             self.file.write("\n")                              # top padding
             self.file.write(self._progress_line() + "\n")      # bar+count
-            self.file.write("\n")                              # mid padding (bar↔legend)
-            self.file.write(self._progress_legend() + "\n")    # legend + bot padding
+            self.file.write("\n")                              # mid padding (bar↔footer)
+            self.file.write(self._progress_footer() + "\n")    # footer + bot padding
             self._progress_drawn = True
+            # Throttle penceresinin başlangıcı: her gerçek render sonrası
+            # kaydedilir. OK render hemen ardından gelen skip update'lerin de
+            # throttle'a düşmesini sağlar (aksi halde 1ms içinde 2 redraw
+            # olur ve flicker döner).
+            self._last_render = time.monotonic()
 
         self.file.flush()
 
     def finish(self) -> None:
         if not self.enabled:
             return
-        # Canlı progress block'u (üst pad + bar + legend + alt pad) temizle.
+        # Canlı progress block'u (üst pad + bar + footer + alt pad) temizle.
         if self.use_ansi and self._progress_drawn:
             self._clear_progress_block()
         # Tablo varsa bottom border'ı kapat.
         if self._headered:
             self.file.write(self._border("└", "┴", "┘") + "\n")
-        # Statik final progress block — canlı block ile aynı padding
-        # düzeni: üst + bar + orta + legend + alt boşluk.
+        # Statik final progress block — toggle ne olursa olsun en sonda
+        # TAM legend göster (tarama bitti, kullanıcı detayları görebilsin).
+        # `_progress_footer` yerine doğrudan `_progress_legend` çağırırız.
         self.file.write("\n")
         self.file.write(self._progress_line() + "\n")
         self.file.write("\n")
         self.file.write(self._progress_legend() + "\n")
         self.file.write("\n")
         self.file.flush()
+
+    # ---- klavye toggle ('d' tuşu) ----------------------------------------
+
+    def attach_keyboard_listener(self, loop) -> None:
+        """stdin'i raw mode'a alıp 'd' tuşunu dinlemeye başla.
+
+        Sadece TTY mode'da (stdin + stderr ikisi de TTY ise) çalışır. cbreak
+        mode sayesinde tuş anında okunur (Enter beklemez). 'd' toggle eder;
+        listener aktif değilse `_progress_footer` her zaman tam legend basar
+        (kullanıcı zaten toggle yapamaz).
+
+        Linux'ta termios; Windows / cbreak desteklemeyen platformlarda sessiz
+        fallback: listener attach EDİLMEZ → legend tam görünmeye devam eder.
+        """
+        if not self.use_ansi:
+            return
+        try:
+            import sys as _sys
+            if not _sys.stdin.isatty():
+                return  # stdin pipe/dosya — keypress okunamaz
+            import termios, tty
+            fd = _sys.stdin.fileno()
+            self._orig_term_attrs = termios.tcgetattr(fd)
+            tty.setcbreak(fd)
+            loop.add_reader(_sys.stdin, self._on_key)
+            self._loop = loop
+            self._keyboard_attached = True
+        except (ImportError, OSError, AttributeError):
+            # termios yoksa (Windows) ya da add_reader Selector loop değilse
+            # sessizce fallback: legend zaten görünür kalır.
+            self._keyboard_attached = False
+
+    def detach_keyboard_listener(self) -> None:
+        """Listener'ı kapat + terminal'i orijinal mode'a geri al.
+
+        amain'in finally bloğundan ÇAĞIRILMAK ZORUNDA: aksi halde scan
+        Ctrl+C ile yarıda kesilirse terminal cbreak'te kalır (echo kapalı,
+        line-buffering yok) ve shell bozulur.
+        """
+        if not self._keyboard_attached:
+            return
+        try:
+            import sys as _sys, termios
+            if self._loop is not None:
+                self._loop.remove_reader(_sys.stdin)
+            if self._orig_term_attrs is not None:
+                fd = _sys.stdin.fileno()
+                termios.tcsetattr(fd, termios.TCSADRAIN, self._orig_term_attrs)
+        except (ImportError, OSError, ValueError):
+            pass
+        self._keyboard_attached = False
+        self._loop = None
+        self._orig_term_attrs = None
+
+    def _on_key(self) -> None:
+        """stdin'den tek karakter oku; 'd' ise toggle + anında redraw.
+
+        Sıra ÖNEMLİ: önce ESKİ state ile clear, sonra toggle, sonra YENİ
+        state ile redraw. `_clear_progress_block` mevcut `show_legend`'e göre
+        satır sayısı hesaplıyor; toggle önce yapılırsa yanlış sayıda satır
+        siler ve ekrana artık satırlar bırakır.
+
+        Diğer karakterler sessizce tüketilir — gelecekte (örn. 'q' = quit,
+        '+/-' concurrency ayarı vb.) genişletilebilir."""
+        try:
+            import sys as _sys
+            ch = _sys.stdin.read(1)
+        except (OSError, BlockingIOError):
+            return
+        if not ch:
+            return
+        if ch in ('d', 'D'):
+            if self.use_ansi and self._progress_drawn:
+                # 1) ESKİ footer ile clear (mevcut ekran ne ise)
+                self._clear_progress_block()
+                # 2) Toggle
+                self.show_legend = not self.show_legend
+                # 3) YENİ footer ile yeniden çiz
+                self.file.write("\n")
+                self.file.write(self._progress_line() + "\n")
+                self.file.write("\n")
+                self.file.write(self._progress_footer() + "\n")
+                self.file.flush()
+            else:
+                # ANSI yoksa toggle anlamsız (zaten legend her zaman görünür)
+                self.show_legend = not self.show_legend
+        elif ch in ('q', 'Q'):
+            # İlk 'q': yumuşak kapanış (in-flight task'lar tamamlansın, gerisi
+            # skipped). İkinci 'q' (quit_event zaten set): force — tüm
+            # task'lar cancel + amain finalization'ı atlar.
+            if self.quit_event is None:
+                return
+            if self.quit_event.is_set():
+                # 2. basış: force
+                if self.force_event is not None and not self.force_event.is_set():
+                    self.force_event.set()
+            else:
+                # 1. basış: graceful
+                self.quit_event.set()
+            # Footer'ı yenile — kullanıcı 'q'ya bastığını anında görsün.
+            # `_last_render` güncellenir → arkadan gelen skip update'leri
+            # throttle penceresine düşer ve yeniden hemen redraw etmez,
+            # böylece flicker olmaz.
+            if self.use_ansi and self._progress_drawn:
+                self._clear_progress_block()
+                self.file.write("\n")
+                self.file.write(self._progress_line() + "\n")
+                self.file.write("\n")
+                self.file.write(self._progress_footer() + "\n")
+                self.file.flush()
+                self._last_render = time.monotonic()
+        elif ch in ('p', 'P'):
+            # Pause/resume toggle. Semantik INVERTED: pause_event SET = çalış,
+            # CLEAR = duraklat. Worker'lar `await pause_event.wait()` ile
+            # devam sinyalini bekler. Quit veya force aktifse pause işlemsiz
+            # (kapanış kararını ezme).
+            if (self.pause_event is None or self.quit_event is None
+                    or self.quit_event.is_set()):
+                return
+            if self.pause_event.is_set():
+                self.pause_event.clear()   # duraklat
+            else:
+                self.pause_event.set()     # devam et
+            # Footer'ı yenile — durum anında görünsün.
+            if self.use_ansi and self._progress_drawn:
+                self._clear_progress_block()
+                self.file.write("\n")
+                self.file.write(self._progress_line() + "\n")
+                self.file.write("\n")
+                self.file.write(self._progress_footer() + "\n")
+                self.file.flush()
+                self._last_render = time.monotonic()
 
 
 def _percentile(data: list[float], p: float) -> float:
@@ -1256,34 +2075,62 @@ def _print_keyval_box(
     if not rows:
         return
     # Önce value'ları wrap'le; sonra max genişlikleri hesapla.
+    # Wrap düz string'lerle yapılır; renkler post-format aşamasında uygulanır.
     wrapped_rows: list[tuple[str, list[str]]] = [
         (k, _wrap_value(v, _KEYVAL_BOX_MAX_VALUE)) for k, v in rows
     ]
-    w_key = max(len(k) for k, _ in wrapped_rows)
+    w_key = max(_visible_len(k) for k, _ in wrapped_rows)
     w_val = max(
-        max(len(line) for line in vlines)
+        max(_visible_len(line) for line in vlines)
         for _, vlines in wrapped_rows
     )
     key_box_width = w_key + 2   # " key " (padding hem solda hem sağda)
     val_box_width = w_val + 2
 
+    # `--flag` görünümlü key'ler bayrak (yeşil), kalanlar türetilmiş bilgi
+    # (dim). Value taraf semantiği call site'a göre değişir — burada düz tut.
+    def _paint_key(k: str) -> str:
+        plain = _strip_ansi(k)
+        if plain.startswith("--"):
+            return _paint(k, _C_GREEN)
+        return _paint(k, _C_DIM)
+
     title_text = f" {title} "
     if len(title_text) <= key_box_width:
-        title_seg = title_text + "─" * (key_box_width - len(title_text))
+        # " TITLE " + dashes — title bold-cyan, dashes dim.
+        tail_dashes = "─" * (key_box_width - len(title_text))
+        title_painted = (
+            " " + _paint(title, _C_BOLD, _C_CYAN) + " "
+            + _paint(tail_dashes, _C_DIM)
+        )
     else:
         # Başlık key kutucuğuna sığmıyor — kısalt.
-        title_seg = f" {title[: key_box_width - 3]}…"[:key_box_width]
+        title_painted = _paint(
+            f" {title[: key_box_width - 3]}…"[:key_box_width],
+            _C_BOLD, _C_CYAN,
+        )
 
-    print("┌" + title_seg + "┬" + "─" * val_box_width + "┐", file=file)
+    border_top = (
+        _paint("┌", _C_DIM)
+        + title_painted
+        + _paint("┬" + "─" * val_box_width + "┐", _C_DIM)
+    )
+    border_bot = _paint(
+        "└" + "─" * key_box_width + "┴" + "─" * val_box_width + "┘", _C_DIM,
+    )
+    sep = _paint("│", _C_DIM)
+    print(border_top, file=file)
     for k, vlines in wrapped_rows:
         # İlk satırda key görünür; takip eden wrap satırlarında key alanı boş.
+        painted_k = _paint_key(k)
         for i, line in enumerate(vlines):
-            key_cell = k if i == 0 else ""
-            print(f"│ {key_cell:<{w_key}} │ {line:<{w_val}} │", file=file)
-    print(
-        "└" + "─" * key_box_width + "┴" + "─" * val_box_width + "┘",
-        file=file,
-    )
+            key_cell = painted_k if i == 0 else ""
+            print(
+                f"{sep} {_pad_left(key_cell, w_key)} "
+                f"{sep} {_pad_left(line, w_val)} {sep}",
+                file=file,
+            )
+    print(border_bot, file=file)
 
 
 def print_config_box(
@@ -1291,7 +2138,6 @@ def print_config_box(
     judge_url: str,
     public_ip: str,
     access_urls: list[str],
-    send_identity: bool,
     reputation_enabled: bool = False,
     run_index: int = 0,
     bucket_groups: dict[str, list[str]] | None = None,
@@ -1304,65 +2150,86 @@ def print_config_box(
     çalıştırılması gerektiğinde hangi parametrelerle yapıldığını net gösterir.
     """
     on, off, unknown = t("value.on"), t("value.off"), t("value.unknown")
+
+    # Her row'un yanına karşılık geldiği uzun CLI flag adı yazılır; kullanıcı
+    # "bu değeri hangi parametre ile değiştiriyorum?" sorusuna AYAR kutusuna
+    # bakarak cevap bulur (--help'e geri dönmek zorunda kalmaz). Flag None
+    # ise (örn. publicIP gibi türetilen değerler) sadece i18n label görünür.
+    def _row(i18n_key: str, flag: str | None, value: str) -> tuple[str, str]:
+        # CLI flag varsa SADECE flag adını göster (örn. "--protocol"); kullanıcı
+        # değeri değiştirmek istediğinde aynen kopyalayıp komut satırına
+        # yapıştırabilir. Flag None ise türetilmiş bir değer (publicIP, kimlik,
+        # bucket dağılımı vs.) — bu durumda i18n label kalır.
+        if flag:
+            return (flag, value)
+        return (t(i18n_key), value)
+
     rows: list[tuple[str, str]] = [
-        (t("row.protocol"),     args.protocol),
-        (t("row.input"),        args.file or t("value.stdin")),
-        (t("row.output"),       args.output or t("value.stdout")),
-        (t("row.judge"),        judge_url),
-        (t("row.public_ip"),    public_ip or unknown),
-        (t("row.level"),        f"≤{args.level}"),
-        (t("row.concurrency"),  str(args.concurrency)),
-        (t("row.timeout"),      t("value.elapsed_seconds", elapsed=args.timeout)),
-        (t("row.retries"),      str(args.retries)),
-        (t("row.tunnel_test"),  on if args.tunnel_test else off),
-        (t("row.mitm_test"),    on if args.mitm_test else off),
-        (t("row.lang"),         i18n.current_language()),
+        _row("row.protocol",     "--protocol",     args.protocol),
+        _row("row.input",        "--file",         args.file or t("value.stdin")),
+        _row("row.output",       "--output",       args.output or t("value.stdout")),
+        _row("row.judge",        "--judge",        judge_url if judge_url else t("value.judge_skipped")),
+        _row("row.public_ip",    None,             public_ip or unknown),
+        _row("row.level",        "--level",        f"≤{args.level}"),
+        _row("row.concurrency",  "--concurrency",  str(args.concurrency)),
+        _row("row.timeout",      "--timeout",      t("value.elapsed_seconds", elapsed=args.timeout)),
+        _row("row.retries",      "--retries",      str(args.retries)),
+        _row("row.tunnel_test",  "--tunnel-test",  on if args.tunnel_test else off),
+        _row("row.mitm_test",    "--mitm-test",    on if args.mitm_test else off),
+        _row("row.lang",         "--lang",         i18n.current_language()),
     ]
     if access_urls:
         samples = ", ".join(access_urls[:3]) + ("..." if len(access_urls) > 3 else "")
-        rows.append((t("row.access_test"),
-                     t("value.access_n_urls", n=len(access_urls), samples=samples)))
+        rows.append(_row("row.access_test", "--access-test",
+                         t("value.access_n_urls", n=len(access_urls), samples=samples)))
     else:
-        rows.append((t("row.access_test"), off))
+        rows.append(_row("row.access_test", "--access-test", off))
     # Output filtreler — sadece set edilmişse göster (kapalı default'lar
     # CONFIG kutusunu şişirmesin).
     if getattr(args, "country", None):
-        rows.append((t("row.country_filter"), args.country))
+        rows.append(_row("row.country_filter", "--country", args.country))
     if getattr(args, "exclude_country", None):
-        rows.append((t("row.country_exclude"), args.exclude_country))
+        rows.append(_row("row.country_exclude", "--exclude-country", args.exclude_country))
     if getattr(args, "exclude_distorting", False):
-        rows.append((t("row.exclude_distorting"), on))
+        rows.append(_row("row.exclude_distorting", "--exclude-distorting", on))
     # --allow-* override'ları: default'tan saparsa CONFIG'te göster ki
     # kullanıcı "neden MITM × output'ta?" gibi sürprize düşmesin.
     if getattr(args, "allow_tunnel_fail", False):
-        rows.append((t("row.allow_tunnel_fail"), on))
+        rows.append(_row("row.allow_tunnel_fail", "--allow-tunnel-fail", on))
     if getattr(args, "allow_mitm", False):
-        rows.append((t("row.allow_mitm"), on))
+        rows.append(_row("row.allow_mitm", "--allow-mitm", on))
     if getattr(args, "allow_access_fail", False):
-        rows.append((t("row.allow_access_fail"), on))
+        rows.append(_row("row.allow_access_fail", "--allow-access-fail", on))
     # --user-agent override edildiyse CONFIG'te göster (default Firefox UA
     # uzun ve gürültülü; sadece override anlamlı bilgi taşır).
     if getattr(args, "user_agent", None):
-        rows.append((t("row.user_agent"), args.user_agent))
-    rows.append((t("row.identity"), on if send_identity else off))
+        rows.append(_row("row.user_agent", "--user-agent", args.user_agent))
     if reputation_enabled:
-        rows.append((t("row.reputation"),
-                     t("value.reputation_on", run=run_index, db=args.reputation)))
+        rows.append(_row("row.reputation", "--reputation",
+                         t("value.reputation_on", run=run_index, db=args.reputation)))
         if bucket_groups is not None:
             hot = len(bucket_groups.get(BUCKET_HOT, []))
             warm = len(bucket_groups.get(BUCKET_WARM, []))
             new = len(bucket_groups.get(BUCKET_NEW, []))
             cold = len(bucket_groups.get(BUCKET_COLD, []))
-            rows.append((t("row.buckets"),
-                         t("value.buckets_breakdown",
-                           hot=hot, warm=warm, new=new, cold=cold)))
+            # buckets/probation türetilmiş — DB durumundan; tek tek flag yok.
+            rows.append(_row("row.buckets", None,
+                             t("value.buckets_breakdown",
+                               hot=hot, warm=warm, new=new, cold=cold)))
         if probation_skipped:
-            rows.append((t("row.probation"),
-                         t("value.probation_skipped", n=probation_skipped)))
-        rows.append((t("row.cold_timeout"),
-                     t("value.elapsed_seconds", elapsed=args.cold_timeout)))
+            rows.append(_row("row.probation", None,
+                             t("value.probation_skipped", n=probation_skipped)))
+        rows.append(_row("row.cold_timeout", "--cold-timeout",
+                         t("value.elapsed_seconds", elapsed=args.cold_timeout)))
     else:
-        rows.append((t("row.reputation"), t("value.reputation_off")))
+        rows.append(_row("row.reputation", "--no-reputation", t("value.reputation_off")))
+    # Önce CLI flag'i olan satırlar (kullanıcı kopyalayıp tekrar çalıştırma
+    # için), sonra türetilmiş bilgi satırları (publicIP, identity, buckets…)
+    # — okurken "neyi değiştirebilirim?" ile "ne gözlemlendi?" karışmasın.
+    rows = (
+        [r for r in rows if r[0].startswith("--")]
+        + [r for r in rows if not r[0].startswith("--")]
+    )
     _print_keyval_box(t("box.title.config"), rows, file)
 
 
@@ -1385,6 +2252,58 @@ def _apply_protocol_defaults(args: argparse.Namespace) -> None:
         args.mitm_test = not http_only
     if args.access_test is None:
         args.access_test = None if http_only else ACCESS_AUTO_SENTINEL
+    # SOCKS4 protokol seviyesinde HTTP header'larına dokunmaz → çalışan her
+    # SOCKS4 ≡ L1 Elite. Bu listede "L2d distorting" görmek tanım gereği
+    # şüphelidir (yanlış-etiketlenmiş HTTP-CONNECT, multi-hop chain, ya da
+    # transparent corporate proxy araya girmiş). Default'ta distorting'leri
+    # at; kullanıcı --no-exclude-distorting ile açıkça istemediğini söylediyse
+    # saygı göster.
+    if args.exclude_distorting is None:
+        args.exclude_distorting = (args.protocol == "socks4")
+    # Access için ayrı timeout: judge timeout'un 2x'i. HTTPS+CONNECT+TLS
+    # handshake kombinasyonu judge'tan (HTTP-only) daha fazla RTT istiyor; 5s
+    # tight, 10s rahat. Kullanıcı --access-timeout ile override edebilir.
+    if args.access_timeout is None:
+        args.access_timeout = args.timeout * 2.0
+
+
+def _export_good(args: argparse.Namespace) -> int:
+    """--export-good: reputation DB'den HOT + WARM proxy'leri stdout'a dök.
+
+    Tarama yapmaz; sadece DB sorgusu. -p (protokol) zorunlu — her protokolün
+    kendi DB'si var. -p verilmezse error.
+
+    Sıralama: HOT first (recent first), sonra WARM (recent first). Bu sayede
+    uygulama ilk N satırı alıp en güvenli proxy'leri kullanabilir.
+
+    Kullanım: `proxyprof -p socks5 --export-good > working.lst`
+    """
+    if not args.protocol:
+        sys.stderr.write(
+            f"{_paint('proxyprof:', _C_DIM)} {t('misc.export_good_needs_protocol')}\n"
+        )
+        return 1
+    db_path = (
+        Path(args.reputation) if args.reputation
+        else default_db_path(args.protocol)
+    )
+    if not db_path.exists():
+        sys.stderr.write(
+            f"{_paint('proxyprof:', _C_DIM)} {t('misc.db_missing', path=db_path)}\n"
+        )
+        return 1
+    rep = Reputation(db_path)
+    try:
+        proxies = rep.list_good()
+    finally:
+        rep.close()
+    for p in proxies:
+        print(p)
+    if not args.silent:
+        sys.stderr.write(
+            f"{_paint('proxyprof:', _C_DIM)} {t('misc.export_good_count', n=len(proxies), db=db_path)}\n"
+        )
+    return 0
 
 
 def _show_db_stats(args: argparse.Namespace) -> int:
@@ -1412,7 +2331,7 @@ def _show_db_stats(args: argparse.Namespace) -> int:
             paths = sorted(db_dir.glob("state*.db"))
         if not paths:
             print(
-                f"proxyprof: {t('misc.db_missing', path=db_dir)}",
+                f"{_paint('proxyprof:', _C_DIM)} {t('misc.db_missing', path=db_dir)}",
                 file=sys.stderr,
             )
             return 1
@@ -1421,7 +2340,7 @@ def _show_db_stats(args: argparse.Namespace) -> int:
     for db_path in paths:
         if not db_path.exists():
             print(
-                f"proxyprof: {t('misc.db_missing', path=db_path)}",
+                f"{_paint('proxyprof:', _C_DIM)} {t('misc.db_missing', path=db_path)}",
                 file=sys.stderr,
             )
             rc = 1
@@ -1478,6 +2397,121 @@ def _print_one_db_stats(db_path, dead_threshold: int) -> None:
         rows.append((t("row.db_countries"), "  ".join(parts)))
 
     _print_keyval_box(t("box.title.db_stats"), rows, sys.stderr)
+
+
+def _verify_gatekeepers(args: argparse.Namespace) -> int:
+    """Her CF_GATEKEEPERS URL'ini doğrudan (proxy'siz) test eder ve
+    sonucu raporlar; yaşayanları overlay'e yazar.
+
+    "Yaşıyor" kriteri:
+      - HTTP status 2xx/3xx
+      - Body /cdn-cgi/trace formatında ("fl=" işareti var)
+      - Response < 10sn
+
+    Test edilen liste: aktif `CF_GATEKEEPERS` (overlay varsa onu, yoksa
+    default'u). Bir önceki overlay'in kalıntılarını tekrar test etmemek
+    için her zaman `CF_GATEKEEPERS_DEFAULT`'u test edelim — kullanıcı
+    listenin tam aralığını her seferinde görsün.
+    """
+    print(
+        f"{_paint('proxyprof:', _C_DIM)} {t('misc.verify_intro', n=len(CF_GATEKEEPERS_DEFAULT))}",
+        file=sys.stderr,
+    )
+
+    alive: list[str] = []
+    dead: list[tuple[str, str]] = []
+
+    async def go() -> None:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(
+            headers={"User-Agent": USER_AGENT},
+            timeout=timeout,
+        ) as session:
+            for url in CF_GATEKEEPERS_DEFAULT:
+                status, reason, elapsed = await _probe_gatekeeper(session, url)
+                if status == "ok":
+                    alive.append(url)
+                    mark = "✓"
+                else:
+                    dead.append((url, reason))
+                    mark = "×"
+                print(
+                    f"  {mark}  {elapsed:5.2f}s  {reason:<30}  {url}",
+                    file=sys.stderr,
+                )
+
+    asyncio.run(go())
+
+    print("", file=sys.stderr)
+    print(
+        f"{_paint('proxyprof:', _C_DIM)} {t('misc.verify_summary', alive=len(alive), dead=len(dead))}",
+        file=sys.stderr,
+    )
+
+    overlay = _gatekeepers_overlay_path()
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    if not alive:
+        print(
+            f"{_paint('proxyprof:', _C_DIM)} {t('misc.verify_no_alive')}",
+            file=sys.stderr,
+        )
+        return 1
+    # Overlay'e yaz: header comment + alive URL'leri.
+    header_lines = [
+        f"# proxyprof gatekeepers overlay — auto-generated by --verify-gatekeepers",
+        f"# generated at: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"# alive: {len(alive)} of {len(CF_GATEKEEPERS_DEFAULT)} tested",
+        f"# delete this file to revert to the hardcoded default list",
+        "",
+    ]
+    if dead:
+        header_lines.append("# Dead/blocked URLs (pruned):")
+        for url, reason in dead:
+            header_lines.append(f"#   {reason:<30}  {url}")
+        header_lines.append("")
+    body = "\n".join(header_lines) + "\n".join(alive) + "\n"
+    try:
+        overlay.write_text(body, encoding="utf-8")
+    except OSError as e:
+        print(
+            f"{_paint('proxyprof:', _C_DIM)} {t('misc.verify_write_failed', path=overlay, err=e)}",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"{_paint('proxyprof:', _C_DIM)} {t('misc.verify_written', path=overlay)}",
+        file=sys.stderr,
+    )
+    return 0
+
+
+async def _probe_gatekeeper(
+    session: "aiohttp.ClientSession", url: str,
+) -> tuple[str, str, float]:
+    """Tek gatekeeper'ı test et. Döner: (kind, reason_text, elapsed_seconds).
+
+    kind: "ok" → alive; aksi halde "fail".
+    reason: kullanıcının göreceği insan-okunabilir özet (status code, error
+    class adı, "no trace marker", vb.).
+    """
+    started = time.monotonic()
+    try:
+        async with session.get(url, allow_redirects=True) as resp:
+            elapsed = time.monotonic() - started
+            if not (200 <= resp.status < 400):
+                return ("fail", f"HTTP {resp.status}", elapsed)
+            body = await resp.text(errors="replace")
+            # CF trace body marker: "fl=" satırı her zaman var
+            if "fl=" not in body and "ip=" not in body:
+                return ("fail", "no trace marker", elapsed)
+            return ("ok", f"HTTP {resp.status}", elapsed)
+    except (asyncio.TimeoutError, TimeoutError):
+        return ("fail", "timeout", time.monotonic() - started)
+    except Exception as e:  # noqa: BLE001
+        cls = type(e).__name__
+        msg = str(e)[:40]
+        return ("fail", f"{cls}: {msg}" if msg else cls,
+                time.monotonic() - started)
 
 
 def print_result_box(
@@ -1641,7 +2675,24 @@ def _passes_output_filters(
     devre dışı bırakır — test yine çalışır, sonuç tabloda görünür ama
     output'ta filtrelenmez.
     """
-    if not r.ok or r.level is None:
+    if not r.ok:
+        return False
+    # --no-judge fast path: anonimlik bilgisi YOK (level/outbound/country
+    # None). Level/distort/country filtreleri uygulanamaz — atlanırlar.
+    # Sadece tunnel/mitm/access kapıları kalır.
+    if r.judge_skipped:
+        if (access_urls and not getattr(args, "allow_access_fail", False)
+                and not r.access_ok):
+            return False
+        if (args.tunnel_test and not getattr(args, "allow_tunnel_fail", False)
+                and r.tunnel_ok is False):
+            return False
+        if (args.mitm_test and not getattr(args, "allow_mitm", False)
+                and r.mitm_suspected is True):
+            return False
+        return True
+    # Normal mod: judge geldi, level/outbound/country bekleniyor.
+    if r.level is None:
         return False
     # Judge yanıtı parse edildi ama REMOTE_ADDR alanı boş → L1 sınıflandırması
     # güvenilmez (CF challenge / DNS hijack / kesik body). Tabloda görünür
@@ -1670,15 +2721,20 @@ def _passes_output_filters(
 
 
 class _StreamWriter:
-    """Tarama sırasında her filtre-geçen proxy'yi dosyaya akıt + dedupe.
+    """Tarama sırasında her filtre-geçen proxy'yi BELLEKTE biriktir + dedupe.
 
-    Plan B: yarıda kesilse bile dosyada bulunmuş proxy'ler kalır (Ctrl+C,
-    OOM, terminal kapanması = sıfır kayıp). Tarama başarıyla tamamlanırsa
-    `finalize()` dosyayı sort+dedupe edilmiş haliyle atomic-replace eder.
+    `-o` DOSYASINA TARAMA SIRASINDA DOKUNULMAZ — eski içerik yerinde durur.
+    `finalize()` çağrıldığında (normal bitiş, graceful quit, ya da force quit
+    öncesi explicit çağrı) toplu olarak atomic-replace ile yazılır.
 
-    Stdout output için (path=None) stream yapılmaz; eskisi gibi finalize'da
-    toplu yazılır — stdout'ta zaten satır-satır akış görmenin değeri yok,
-    pipe alıcısı genelde bütün listeyi bekler.
+    Bu sayede tarama yarıda kesilirse (Ctrl+C, OOM, terminal kapanması):
+      - finalize çağrılmadıysa: `-o` ESKİ İÇERİĞİYLE durur, hiçbir şey kaybolmaz.
+      - finalize çağrıldıysa: `-o` o anki sonuçlarla güncellenmiş olur.
+
+    Force quit handler'ı bilinçli olarak `finalize()` çağırır → kullanıcı
+    'q q' ile çıksa bile o ana kadar bulunan proxy'ler `-o`'ya yazılır.
+
+    Stdout output için (path=None) yazma yok; çağıran liste döndürülür.
     """
 
     def __init__(
@@ -1689,11 +2745,8 @@ class _StreamWriter:
         self.path = path
         self.passes = passes
         self.seen: set[str] = set()
-        self._fh = None
-        if path:
-            # Line-buffered + her satırdan sonra flush: Ctrl+C anında disk'te
-            # mevcut tüm yazımlar kalır (kernel page cache değil, dosyaya).
-            self._fh = open(path, "w", buffering=1, encoding="utf-8")
+        # In-memory only. Hit oranı tipik %5-10; 100k tarama = 5-10k satır =
+        # birkaç yüz KB RAM — hiç sorun değil.
 
     def on_result(self, r: ScanResult) -> None:
         if r.proxy in self.seen:
@@ -1701,36 +2754,38 @@ class _StreamWriter:
         if not self.passes(r):
             return
         self.seen.add(r.proxy)
-        if self._fh is not None:
-            self._fh.write(r.proxy + "\n")
-            self._fh.flush()
 
     def finalize(self) -> list[str]:
-        """Sort+dedupe edilmiş kept listesini döndür.
+        """Sort+dedupe edilmiş kept listesini döndür ve `-o` dosyasına yaz.
 
-        File output: atomic replace ile dosyayı sıralı haliyle değiştir
-        (`.tmp` + os.replace). Hata olursa ham (sırasız) stream dosyası
-        yerinde kalır — kayıp yok.
-        Stdout: sadece sıralı listeyi döndür, çağıran print eder.
+        File output: `.tmp` + `os.replace()` ile atomic replace. Eski `-o`
+        içeriği ancak başarılı replace anında değişir — `.tmp` yazımı
+        başarısız olursa eski `-o` dokunulmamış kalır.
+
+        Stdout (path=None): sadece sıralı listeyi döndür, çağıran print eder.
+
+        Birden fazla çağrı güvenli (idempotent): finalize çağrılınca `self.seen`
+        boşaltılmaz; tekrar çağrılırsa aynı içeriği aynı şekilde yazar.
         """
         ordered = sorted(self.seen, key=_ip_port_sort_key)
-        if self._fh is not None:
-            self._fh.close()
-            self._fh = None
-            if self.path:
-                tmp = self.path + ".tmp"
+        if self.path and ordered:
+            # Sadece bulgu varsa atomic-replace yap. Boş set ile finalize
+            # çağırmak (örn. force quit hemen tarama başında geldiyse) eski
+            # `-o` içeriğini silecekti — bunu engelle, eski dosya yerinde kalsın.
+            # Boş çıktı kullanıcı için faydasız zaten.
+            tmp = self.path + ".tmp"
+            try:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    for line in ordered:
+                        f.write(line + "\n")
+                os.replace(tmp, self.path)
+            except OSError:
+                # Yazma başarısız → eski `-o` dokunulmamış kalır (atomic
+                # semantic). `.tmp`'yi temizle.
                 try:
-                    with open(tmp, "w", encoding="utf-8") as f:
-                        for line in ordered:
-                            f.write(line + "\n")
-                    os.replace(tmp, self.path)
+                    os.unlink(tmp)
                 except OSError:
-                    # Sort/replace başarısız → ham stream dosyası kalır,
-                    # kullanıcı sıralanmamış ama tam listeye sahip olur.
-                    try:
-                        os.unlink(tmp)
-                    except OSError:
-                        pass
+                    pass
         return ordered
 
 
@@ -1746,6 +2801,12 @@ async def scan(
     send_identity: bool,
     table: LiveTable | None,
     writer: _StreamWriter | None = None,
+    no_judge: bool = False,
+    quit_event: asyncio.Event | None = None,
+    force_event: asyncio.Event | None = None,
+    pause_event: asyncio.Event | None = None,
+    access_timeout: float | None = None,
+    access_strict: bool = False,
 ) -> list[ScanResult]:
     """Verilen ScanTask listesini async olarak tara.
 
@@ -1753,12 +2814,74 @@ async def scan(
     task'ları zaten istenen dispatch order'da (weighted-interleaved) verir;
     tek shared semafor + asyncio.gather doğal olarak ilk task'ları ilk
     dispatch eder, böylece HOT bucket öncelik kazanır.
+
+    Quit kontrolü ('q' tuşundan):
+      - `quit_event` set ise: worker semafor edinmeden önce ve aldıktan sonra
+        kontrol eder; set ise probe çalıştırmaz, skipped=True ScanResult
+        döner. Kuyrukta bekleyen yüzlerce task hızla drain olur.
+      - `force_event` set ise: arka plandaki bir watcher tüm aktif task'ları
+        cancel eder. gather CancelledError'ları synthetic skipped'a çevirir.
+        Tarama anında biter.
     """
     sem = asyncio.Semaphore(concurrency)
     poison = IPPoison()
 
+    def _quit_skip(t: ScanTask, reason_key: str) -> ScanResult:
+        return ScanResult(
+            proxy=t.proxy, ok=False, level=None, elapsed=0.0,
+            error=reason_key, skipped=True, bucket=t.bucket,
+        )
+
+    async def _pause_wait_skip(t: ScanTask) -> ScanResult | None:
+        """Pause aktifse bekle; pause sırasında quit gelirse skip döner.
+        Aksi halde None (devam et)."""
+        if pause_event is None or pause_event.is_set():
+            return None
+        while not pause_event.is_set():
+            # Periyodik wake-up: quit kontrolü için. asyncio.wait_for ile
+            # 0.2s tick — quit'i hızlı algılar, yine de paused-bekleyiş
+            # CPU spinlemez.
+            try:
+                await asyncio.wait_for(pause_event.wait(), timeout=0.2)
+            except (asyncio.TimeoutError, TimeoutError):
+                pass
+            if quit_event is not None and quit_event.is_set():
+                return _quit_skip(t, "skipped: quit during pause")
+        return None
+
     async def worker(t: ScanTask) -> ScanResult:
+        # Semafor ÖNCESİ quit check: kuyrukta bekleyenler hızlı drain olsun.
+        if quit_event is not None and quit_event.is_set():
+            r = _quit_skip(t, "skipped: quit requested")
+            if table is not None:
+                table.update(r)
+            if writer is not None:
+                writer.on_result(r)
+            return r
         async with sem:
+            # Semafor SONRASI check: edinene kadar quit gelmiş olabilir.
+            if quit_event is not None and quit_event.is_set():
+                r = _quit_skip(t, "skipped: quit requested")
+                if table is not None:
+                    table.update(r)
+                if writer is not None:
+                    writer.on_result(r)
+                return r
+            # Pause check SEMAFOR İÇİNDE: 'p' basılınca slot edinmiş ama probe'a
+            # başlamamış worker'lar burada bekler. Slot meşgul kalır → diğer
+            # worker'lar zaten kuyrukta. Sonuç: tüm slot'lar paused worker'larla
+            # dolar, hiç probe çalışmaz. Pause öncesi probe çalıştırmaya
+            # başlamış worker'lar (mid-network-IO) doğal olarak tamamlanır,
+            # spec'e uygun ("in-flight olanlar tamamlanır"). Resume sonrası
+            # bekleyenler aynı slot'tan probe'a geçer; ek dispatch overhead'i
+            # yok.
+            skip = await _pause_wait_skip(t)
+            if skip is not None:
+                if table is not None:
+                    table.update(skip)
+                if writer is not None:
+                    writer.on_result(skip)
+                return skip
             ip = t.proxy.partition(":")[0]
             poisoned_reason = poison.reason(ip)
             if poisoned_reason is not None:
@@ -1775,6 +2898,9 @@ async def scan(
                     timeout=t.timeout, retries=retries,
                     public_ip=public_ip, access_urls=access_urls,
                     tunnel_test=tunnel_test, send_identity=send_identity,
+                    no_judge=no_judge,
+                    access_timeout=access_timeout,
+                    access_strict=access_strict,
                 )
                 r.bucket = t.bucket
                 if r.ok:
@@ -1787,7 +2913,44 @@ async def scan(
                 writer.on_result(r)
             return r
 
-    return await asyncio.gather(*(worker(t) for t in tasks))
+    worker_tasks = [asyncio.create_task(worker(t)) for t in tasks]
+
+    # Force-quit watcher: force_event set olunca tüm aktif task'ları cancel
+    # et. None ise watcher gereksiz (sleep'te asılı kalmasın).
+    async def _force_canceller():
+        if force_event is None:
+            return
+        await force_event.wait()
+        for wt in worker_tasks:
+            if not wt.done():
+                wt.cancel()
+
+    canceller_task = asyncio.create_task(_force_canceller())
+    try:
+        results = await asyncio.gather(*worker_tasks, return_exceptions=True)
+    finally:
+        canceller_task.cancel()
+
+    # CancelledError'ları synthetic skipped ScanResult'a çevir; diğer beklenmeyen
+    # exception'ları "fail" olarak işle.
+    final: list[ScanResult] = []
+    for r, task in zip(results, tasks):
+        if isinstance(r, ScanResult):
+            final.append(r)
+        elif isinstance(r, asyncio.CancelledError):
+            final.append(ScanResult(
+                proxy=task.proxy, ok=False, level=None, elapsed=0.0,
+                error="cancelled: force quit", skipped=True, bucket=task.bucket,
+            ))
+        elif isinstance(r, BaseException):
+            final.append(ScanResult(
+                proxy=task.proxy, ok=False, level=None, elapsed=0.0,
+                error=f"{type(r).__name__}: {r}", bucket=task.bucket,
+            ))
+        else:
+            # Defensive — gather sözleşmesinde olmasa da yine de kabul et.
+            final.append(_quit_skip(task, "unknown gather result"))
+    return final
 
 
 def _ip_port_sort_key(s: str) -> tuple[tuple[int, int, int, int], int]:
@@ -1806,32 +2969,77 @@ def _parse_access_urls(arg: str | None) -> list[str]:
         if not u:
             continue
         if not (u.startswith("http://") or u.startswith("https://")):
-            sys.exit(f"proxyprof: {t('input.access_url_invalid', url=u)}")
+            sys.exit(f"{_paint('proxyprof:', _C_DIM)} {t('input.access_url_invalid', url=u)}")
         out.append(u)
     return out
 
 
 def _resolve_access_test(arg: str | None) -> tuple[list[str], str]:
-    """args.access_test → (URL listesi, mode).
+    """args.access_test → (CANDIDATE URL listesi, mode).
 
     Mode değerleri ACCESS_MODE_* sabitleri; UI legend'inde "ne testi yapılıyor"
     bilgisini göstermek için kullanılır.
 
     None                    → ([], OFF)
-    "AUTO" / "cloudflare"   → CF_GATEKEEPERS'tan rastgele {AUTO_COUNT} site, CF
-    "google"                → GOOGLE_GATEKEEPERS'tan rastgele {AUTO_COUNT} site, GOOGLE
+    "AUTO" / "cloudflare"   → TÜM CF_GATEKEEPERS havuzu, mode=CF
+    "google"                → TÜM GOOGLE_GATEKEEPERS havuzu, mode=GOOGLE
     "url1,url2"             → kullanıcı verdiği URL'ler (validate edilir), CUSTOM
+
+    Önemli: preset modlarda artık RASTGELE 3 değil, TÜM havuz döner. amain'de
+    session-start auto-verify ölü URL'leri eler, sonra alive havuzdan ACCESS_
+    AUTO_COUNT kadar rastgele örnek alınır. Bu sayede 3 random pick'in 2'sinin
+    ölü olması ihtimali (~%50+ vakaya) ortadan kalkar.
     """
     if arg is None:
         return [], ACCESS_MODE_OFF
     norm = arg.strip().lower()
     if norm in (ACCESS_AUTO_SENTINEL.lower(), ACCESS_PRESET_CLOUDFLARE):
-        k = min(ACCESS_AUTO_COUNT, len(CF_GATEKEEPERS))
-        return random.sample(CF_GATEKEEPERS, k=k), ACCESS_MODE_CF
+        return list(CF_GATEKEEPERS), ACCESS_MODE_CF
     if norm == ACCESS_PRESET_GOOGLE:
-        k = min(ACCESS_AUTO_COUNT, len(GOOGLE_GATEKEEPERS))
-        return random.sample(GOOGLE_GATEKEEPERS, k=k), ACCESS_MODE_GOOGLE
+        return list(GOOGLE_GATEKEEPERS), ACCESS_MODE_GOOGLE
     return _parse_access_urls(arg), ACCESS_MODE_CUSTOM
+
+
+async def _filter_alive_gatekeepers(
+    urls: list[str],
+    session: "aiohttp.ClientSession",
+    timeout: float = 4.0,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Verilen URL listesini PARALEL test et; (alive, dead_with_reason) döner.
+
+    `dead_with_reason` her ölü URL için (url, kısa_sebep) tuple'ı içerir;
+    kullanıcıya stderr'e "şu URL şu yüzden ölü" şeklinde raporlanır.
+
+    Kullanım: session başında ölü gatekeeper'ları o oturumdan ele. Network
+    cost: ~32 paralel HTTP GET, ~1-2 saniye total (asyncio.gather).
+    Aynı session re-use edilir — connection pool'dan faydalanılır.
+    """
+    if not urls:
+        return [], []
+
+    async def _check(url: str) -> tuple[str, str | None]:
+        # asyncio.wait_for ile hard cap — bazı endpoint'ler timeout
+        # parametresine rağmen asılı kalabilir (DNS hangs vb.).
+        try:
+            kind, reason, _elapsed = await asyncio.wait_for(
+                _probe_gatekeeper(session, url),
+                timeout=timeout + 1.0,
+            )
+        except (asyncio.TimeoutError, TimeoutError):
+            return url, "timeout"
+        except Exception as e:  # noqa: BLE001
+            return url, f"{type(e).__name__}"
+        return url, (None if kind == "ok" else reason)
+
+    results = await asyncio.gather(*(_check(u) for u in urls))
+    alive: list[str] = []
+    dead: list[tuple[str, str]] = []
+    for url, reason in results:
+        if reason is None:
+            alive.append(url)
+        else:
+            dead.append((url, reason))
+    return alive, dead
 
 
 def _status(msg: str, silent: bool) -> None:
@@ -1843,8 +3051,22 @@ def _status(msg: str, silent: bool) -> None:
     aşamanın başında ne yapıldığını yazdırırız; bir önceki adımın tamamlandığı
     bir sonraki satırın görünmesinden anlaşılır."""
     if not silent:
-        sys.stderr.write(f"proxyprof: {msg}\n")
+        sys.stderr.write(f"{_paint('proxyprof:', _C_DIM)} {msg}\n")
         sys.stderr.flush()
+
+
+def _print_judge_unavailable_hints() -> None:
+    """`JudgeUnavailable` sonrası kullanıcıya 4 somut çözüm öner.
+
+    Sebep: tüm aday judge'lar timeout / 4xx-5xx / DNS-fail oldu. Olası
+    nedenler: internet down, geçici outage, agresif timeout, firewall.
+    Hint'ler yapılabilirden zora doğru sıralı."""
+    sys.stderr.write("\n" + t("judge.unavail_intro") + "\n")
+    sys.stderr.write(t("judge.unavail_hint_net") + "\n")
+    sys.stderr.write(t("judge.unavail_hint_timeout") + "\n")
+    sys.stderr.write(t("judge.unavail_hint_custom") + "\n")
+    sys.stderr.write(t("judge.unavail_hint_skip") + "\n\n")
+    sys.stderr.flush()
 
 
 def _print_cf_judge_warning(judge_url: str, evidence: str) -> None:
@@ -1861,12 +3083,60 @@ def _print_cf_judge_warning(judge_url: str, evidence: str) -> None:
     sys.stderr.write(t("judge.cf_warn_effect1") + "\n\n")
     sys.stderr.write(t("judge.cf_warn_effect2") + "\n\n")
     sys.stderr.write(t("judge.cf_warn_effect3") + "\n\n")
+    sys.stderr.write(t("judge.cf_warn_alt_intro") + "\n")
+    sys.stderr.write(t("judge.cf_warn_alt_custom") + "\n")
+    sys.stderr.write(t("judge.cf_warn_alt_skip") + "\n\n")
     sys.stderr.flush()
 
 
 async def amain(args: argparse.Namespace) -> int:
     _status(t("bootstrap.reading"), args.silent)
     proxies = read_proxies(args.file)
+
+    # Protokol-port uyumsuzluğu sezgisi: `-p socks5` + input'ta port 4145
+    # (SOCKS4 konvansiyon portu) yoğunsa kullanıcıyı uyar. Bu proxy'ler
+    # büyük olasılıkla SOCKS4 daemon — SOCKS5 olarak test edilirse handshake
+    # geçer (compat shim) ama HTTPS payload transferinde connection drop
+    # yaşanır → tabloda `err` patlaması olur.
+    if args.protocol == "socks5" and not args.silent:
+        port_4145 = sum(1 for p in proxies if p.endswith(":4145"))
+        if port_4145 > 0 and port_4145 / max(len(proxies), 1) >= 0.05:
+            pct = 100.0 * port_4145 / len(proxies)
+            sys.stderr.write(
+                f"{_paint('proxyprof:', _C_DIM)} {t('hint.socks5_port_4145', n=port_4145, pct=pct)}\n"
+            )
+
+    # Output dosyası seed: `--retest-output` (default açık) iken `-o FILE`
+    # mevcut ve doluysa, dosyadaki proxy'leri input'a ekle. Mantık: -o tipik
+    # olarak "geçen taramanın çalışan proxy'leri" listesidir; bu run'da onları
+    # da tekrar test ederek "hala çalışıyor mu?" sorusuna cevap almak istiyoruz.
+    # Sonuçta -o üzerine yeni tarama çıktısı yazılır (eski içerik tekrar bu
+    # taramadan geçtikten sonra kalanları ile değişir).
+    if args.retest_output and args.output:
+        try:
+            out_path = Path(args.output)
+            if out_path.exists() and out_path.stat().st_size > 0:
+                with out_path.open(encoding="utf-8") as fh:
+                    seed_text = fh.read()
+                seed_proxies = parse_proxies(seed_text)
+                if seed_proxies:
+                    # Dedup ile birleştir: input order + sonra seed'in input'ta
+                    # olmayanları. dict.fromkeys insertion order'ı korur.
+                    before = len(proxies)
+                    proxies = list(dict.fromkeys([*proxies, *seed_proxies]))
+                    added = len(proxies) - before
+                    if added > 0:
+                        _status(
+                            t("bootstrap.reseeded",
+                              n=added, total=len(seed_proxies),
+                              path=args.output),
+                            args.silent,
+                        )
+        except OSError:
+            # Output dosyası okunamadıysa sessizce geç — yazma vakti gelince
+            # zaten error_log basılır; burada scan'i blokeleme.
+            pass
+
     # --no-access-test her durumda --access-test'in üzerine yazar; AUTO,
     # cloudflare, google preset'i, ya da özel URL listesi — hepsi iptal edilir.
     if args.no_access_test:
@@ -1904,6 +3174,50 @@ async def amain(args: argparse.Namespace) -> int:
             ):
                 probation_skipped.append(p)
 
+    # `--top-n N`: input'tan SADECE en muhtemel-iyi N proxy'yi tara.
+    # Sıralama: HOT (en son başarı önce) → WARM (en son başarı önce) → NEW.
+    # COLD bucket tamamen DIŞARIDA — top-N kısa-zaman "şu an çalışanları test"
+    # senaryosu için; ölü kuyruğu beklemiyoruz. Probation skipped'lar nasılsa
+    # zaten dışarıda. Reputation kapalıysa anlamsız → hata.
+    if args.top_n is not None:
+        if reputation is None:
+            sys.stderr.write(
+                f"{_paint('proxyprof:', _C_DIM)} {t('misc.top_n_needs_reputation')}\n"
+            )
+            return 1
+        skip_set = set(probation_skipped)
+        now_for_sort = now_epoch()
+        hot_cutoff = now_for_sort - 24 * 3600
+
+        def _priority_key(p: str) -> tuple[int, int]:
+            if p in skip_set:
+                return (9, 0)   # probation: en arkaya at
+            bucket = bucket_map.get(p, BUCKET_NEW)
+            rec = bucket_records.get(p)
+            ls = getattr(rec, "last_success", None) if rec else None
+            if bucket == BUCKET_HOT:
+                return (0, -(ls or 0))
+            if bucket == BUCKET_WARM:
+                return (1, -(ls or 0))
+            if bucket == BUCKET_NEW:
+                return (2, 0)
+            return (8, 0)  # COLD
+
+        sorted_proxies = sorted(proxies, key=_priority_key)
+        # COLD ve probation'ı tamamen at
+        sorted_proxies = [
+            p for p in sorted_proxies
+            if p not in skip_set
+            and bucket_map.get(p) != BUCKET_COLD
+        ]
+        proxies_before = len(proxies)
+        proxies = sorted_proxies[:args.top_n]
+        _status(
+            t("bootstrap.top_n_applied",
+              n=len(proxies), max=args.top_n, total=proxies_before),
+            args.silent,
+        )
+
     # Bucket gruplarını oluştur (probation'dan geçemeyenler hariç).
     if reputation is not None:
         skip_set = set(probation_skipped)
@@ -1935,12 +3249,26 @@ async def amain(args: argparse.Namespace) -> int:
     # bir `-T 2` verirse canhazip.com'un TLS handshake'ini kesmesin.
     _status(t("bootstrap.preparing"), args.silent)
     bootstrap_timeout = max(args.timeout, 10.0)
+    # AsyncResolver (aiodns/c-ares) kullan — default ThreadedResolver
+    # `loop.getaddrinfo`'yu blocking thread executor'a koyar; bir DNS yavaş
+    # olduğunda thread tıkanır ve sonraki tüm DNS'ler kuyrukta bekleyip
+    # timeout'a kadar gidebilir. AsyncResolver gerçek async DNS yapar.
+    bootstrap_conn = aiohttp.TCPConnector(resolver=aiohttp.AsyncResolver())
     async with aiohttp.ClientSession(
         headers={"User-Agent": USER_AGENT},
+        connector=bootstrap_conn,
     ) as bootstrap:
         public_ip = await get_public_ip(bootstrap, timeout=bootstrap_timeout)
+        if public_ip:
+            _status(t("bootstrap.public_ip_found", ip=public_ip), args.silent)
+        else:
+            _status(t("bootstrap.public_ip_unknown"), args.silent)
 
-        if args.judge:
+        if args.no_judge:
+            # --no-judge: judge'a hiç gidilmez. Anonimlik tespiti devre dışı.
+            # Sadece tunnel/access/mitm testleri çalışır.
+            judge_url = None  # type: ignore[assignment]
+        elif args.judge:
             # Kullanıcı explicit judge verdi. CF arkasında mı kontrol et —
             # arkasındaysa tarama biasını uyar ve E/h onayı al.
             judge_url = args.judge
@@ -1950,7 +3278,7 @@ async def amain(args: argparse.Namespace) -> int:
             if is_cf and not args.silent:
                 _print_cf_judge_warning(judge_url, evidence)
                 if not _prompt(t("judge.cf_continue_prompt"), default_yes=True):
-                    sys.stderr.write(f"proxyprof: {t('judge.cf_aborted')}\n")
+                    sys.stderr.write(f"{_paint('proxyprof:', _C_DIM)} {t('judge.cf_aborted')}\n")
                     if reputation is not None:
                         reputation.close()
                     return 1
@@ -1959,32 +3287,129 @@ async def amain(args: argparse.Namespace) -> int:
             # `is_judge_behind_cf` ile CF'e geçenleri pre-filter et; geriye
             # kalanları shuffle ile her oturumda farklı sıra dene → tek bir
             # public judge'ın yükünü bizim taramamız üstüne yıkmaz.
+            #
+            # PARALEL filtering: eskiden sıralı çağrı yapıyordu, dead domain'in
+            # DNS lookup'ı 5-15s asılabiliyordu → 9 candidate × yavaş = bootstrap
+            # 30s+. Şimdi asyncio.gather ile hepsini aynı anda check ediyoruz;
+            # her bir lookup için sıkı timeout (3s) — timeout olursa "muhtemelen
+            # ölü, pick_judge'a yolla, orada kesin kararı verecek" varsayarak
+            # non-CF olarak işaretle.
             candidates = list(judges_for(args.protocol))
-            non_cf: list[str] = []
-            for url in candidates:
-                is_cf, _ = await is_judge_behind_cf(
-                    url, session=None, timeout=bootstrap_timeout,
-                )
-                if not is_cf:
-                    non_cf.append(url)
+
+            async def _cf_check(url: str) -> tuple[str, bool]:
+                try:
+                    is_cf, _ = await asyncio.wait_for(
+                        is_judge_behind_cf(url, session=None, timeout=3.0),
+                        timeout=3.0,
+                    )
+                    return url, is_cf
+                except (TimeoutError, asyncio.TimeoutError, OSError):
+                    return url, False  # DNS timeout → non-CF varsay, pick_judge eler
+
+            cf_results = await asyncio.gather(
+                *(_cf_check(u) for u in candidates),
+                return_exceptions=False,
+            )
+            non_cf = [u for u, is_cf in cf_results if not is_cf]
             if not non_cf:
-                # Beklenmedik durum: tüm default'lar CF'e geçmiş. Fail-safe:
-                # orijinal listeyi shuffle edip kullan, bias riskini logla.
-                sys.stderr.write(f"proxyprof: {t('judge.all_defaults_cf')}\n")
+                sys.stderr.write(f"{_paint('proxyprof:', _C_DIM)} {t('judge.all_defaults_cf')}\n")
                 non_cf = candidates
             random.shuffle(non_cf)
+            pick_timeout = min(bootstrap_timeout, 6.0)
+            _status(
+                t("bootstrap.judge_candidates",
+                  n=len(non_cf), timeout=pick_timeout),
+                args.silent,
+            )
+
+            def _on_judge_attempt(
+                url: str, ok: bool, reason: str, elapsed: float,
+            ) -> None:
+                # pick_judge bir aday bittiğinde (success/fail) çağırır;
+                # cancel edilenler çağrılmaz → satır sayısı = test edilen
+                # gerçek aday adedi.
+                if args.silent:
+                    return
+                key = ("bootstrap.judge_attempt_ok" if ok
+                       else "bootstrap.judge_attempt_fail")
+                # URL cyan, elapsed dim, reason kırmızı (fail) ya da yok (ok);
+                # ✓/× i18n string'inin içinde, dolayısıyla her dilde aynı
+                # mark karakterini ayrı boyamak için raw'da bırakıp burada
+                # boya: ✓ → yeşil, × → kırmızı.
+                raw = t(key, url=_paint(url, _C_CYAN), reason=_paint(reason, _C_RED),
+                        elapsed=elapsed)
+                raw = raw.replace("✓", _paint("✓", _C_GREEN))
+                raw = raw.replace("×", _paint("×", _C_RED))
+                sys.stderr.write(raw + "\n")
+
             try:
+                # pick_judge artık paralel (judges.py'de race-based);
+                # candidate'ları aynı anda fırlatır, ilk parseable 200 wins.
+                # Daha kısa per-judge timeout: 6s yeterli (canlı judge tipik
+                # 100-500ms; 6s = "kesin ölü" sınırı).
                 judge_url, _ = await pick_judge(
                     bootstrap, non_cf,
-                    timeout=bootstrap_timeout,
+                    timeout=pick_timeout,
+                    on_attempt=_on_judge_attempt,
                 )
             except JudgeUnavailable as e:
-                print(f"proxyprof: {e}", file=sys.stderr)
+                print(f"{_paint('proxyprof:', _C_DIM)} {e}", file=sys.stderr)
+                _print_judge_unavailable_hints()
                 if reputation is not None:
                     reputation.close()
                 return 1
+            _status(t("bootstrap.judge_selected", url=judge_url), args.silent)
 
-    send_identity = _judge_accepts_proxyprof_header(judge_url)
+        # ----- Auto-verify access gatekeepers (session-start prune) -----
+        # access-test aktifse, kullanılacak URL'leri proxy'siz olarak şimdi
+        # test et. Ölü URL'ler (CF zone disable etmiş, auth gerektiriyor,
+        # DNS hijack vs.) o oturumdan elenir → tarama sırasında binlerce
+        # proxy üzerinden gereksiz fail yaşanmaz.
+        #
+        # Tasarım kararı: --verify-gatekeepers'ın overlay yazma özelliğini
+        # tetiklemez (overlay user'ın explicit komut çağırması ile yazılır).
+        # Bu, sadece bu oturum için in-memory filtreleme. Kullanıcı her run'da
+        # yeni ölü URL'leri görebilir; pattern oluştuysa overlay komutunu
+        # çağırır.
+        if access_urls:
+            _status(
+                t("bootstrap.verifying_access", n=len(access_urls)),
+                args.silent,
+            )
+            alive_urls, dead_urls = await _filter_alive_gatekeepers(
+                access_urls, bootstrap, timeout=4.0,
+            )
+            if dead_urls and not args.silent:
+                # İlk birkaç ölü URL'i listele; çok sayıda varsa "..N daha".
+                summary = "; ".join(
+                    f"{u} ({r})" for u, r in dead_urls[:3]
+                )
+                if len(dead_urls) > 3:
+                    summary += f"; +{len(dead_urls) - 3} daha"
+                sys.stderr.write(
+                    f"{_paint('proxyprof:', _C_DIM)} {t('bootstrap.access_pruned', n=len(dead_urls), total=len(access_urls), dead=summary)}\n"
+                )
+            if not alive_urls:
+                # Tüm gatekeeper'lar ölü — access-test bu oturum için devre dışı.
+                sys.stderr.write(
+                    f"{_paint('proxyprof:', _C_DIM)} {t('bootstrap.no_alive_gatekeepers')}\n"
+                )
+                access_urls = []
+                access_mode = ACCESS_MODE_OFF
+            else:
+                # Preset modlarda alive havuzdan N random örnek al; custom
+                # modda kullanıcının verdiği URL'leri olduğu gibi kullan (ama
+                # ölüler atılmış).
+                if access_mode in (ACCESS_MODE_CF, ACCESS_MODE_GOOGLE):
+                    k = min(ACCESS_AUTO_COUNT, len(alive_urls))
+                    access_urls = random.sample(alive_urls, k=k)
+                else:
+                    access_urls = alive_urls
+
+    send_identity = (
+        False if args.no_judge
+        else _judge_accepts_proxyprof_header(judge_url)
+    )
 
     # HTTP proxy + HTTPS judge uyumsuzluğu uyarısı.
     # HTTPS judge'a giden trafik CONNECT tunnel + TLS içinden geçer, proxy
@@ -1992,13 +3417,16 @@ async def amain(args: argparse.Namespace) -> int:
     # senaryoda HTTP forwarding gözlemine bağlıdır ve yanıltıcı olabilir:
     # CONNECT-yetkin proxy hep L1 görünür, CONNECT-yetkinsiz proxy plain
     # forwarding'e düşerse L2/L2d görünebilir. HTTP judge auto-seçimi (-j
-    # vermezsen) bu sorunu otomatik elimine eder.
+    # vermezsen) bu sorunu otomatik elimine eder. no_judge mode'da judge
+    # yok zaten → uyarı yok.
     if (
-        args.protocol == "http"
+        not args.no_judge
+        and args.protocol == "http"
+        and judge_url is not None
         and judge_url.lower().startswith("https://")
         and not args.silent
     ):
-        print(f"proxyprof: {t('warn.http_proxy_https_judge')}",
+        print(f"{_paint('proxyprof:', _C_DIM)} {t('warn.http_proxy_https_judge')}",
               file=sys.stderr)
 
     # CONFIG kutusu taramanın BAŞINDA basılır — progress satırı altında akar,
@@ -2010,7 +3438,6 @@ async def amain(args: argparse.Namespace) -> int:
             judge_url=judge_url,
             public_ip=public_ip,
             access_urls=access_urls,
-            send_identity=send_identity,
             reputation_enabled=reputation is not None,
             run_index=run_index,
             bucket_groups=(bucket_groups if reputation is not None else None),
@@ -2026,6 +3453,17 @@ async def amain(args: argparse.Namespace) -> int:
     #     Filtreler aktif, çıktı ilgili yere yazılır.
     interactive_mode = not args.output and not args.silent
 
+    # 'q' tuşu için event'ler — LiveTable._on_key set ediyor, scan() ve
+    # finalization akışı bunlara bakıyor. asyncio.Event running loop içinde
+    # yaratılır; bu noktada amain zaten async context'inde.
+    quit_event = asyncio.Event()
+    force_event = asyncio.Event()
+    # pause_event SEMANTIK INVERTED: SET = çalışıyor (default), CLEAR = duraklatıldı.
+    # Worker'lar `await pause_event.wait()` ile devam sinyalini bekler. 'p' tuşu
+    # toggle eder. Başlangıç set'li (=çalışıyor).
+    pause_event = asyncio.Event()
+    pause_event.set()
+
     # LiveTable total = aslında test edilecek proxy sayısı (probation skipped'lar
     # hariç). Probation skipped'lar tabloda görünmez ama özet kutuda raporlanır.
     # Interactive mod'da level filtresi yokmuş gibi davran (level_max=3) →
@@ -2034,6 +3472,9 @@ async def amain(args: argparse.Namespace) -> int:
         enabled=not args.silent, total=len(tasks),
         level_max=3 if interactive_mode else args.level,
         access_mode=access_mode, access_count=len(access_urls),
+        quit_event=quit_event, force_event=force_event,
+        pause_event=pause_event,
+        protocol=args.protocol,
     )
 
     # Country filter set'leri scan başlamadan inşa edilir; stream-writer
@@ -2063,31 +3504,61 @@ async def amain(args: argparse.Namespace) -> int:
         writer = _StreamWriter(path=args.output, passes=passes_fn)
     except OSError as e:
         print(
-            f"proxyprof: {t('misc.cannot_open_output', path=args.output, err=e)}",
+            f"{_paint('proxyprof:', _C_DIM)} {t('misc.cannot_open_output', path=args.output, err=e)}",
             file=sys.stderr,
         )
         return 1
 
+    # Klavye listener: 'd' (toggle legend) + 'q' (graceful quit) / 'q' tekrar
+    # (force quit). cbreak mode'a stdin'i alıyor; ne olursa olsun (Ctrl+C,
+    # exception, normal exit) detach EDİLMEK ZORUNDA, aksi halde terminal
+    # cbreak'te kalıp shell bozulur → try/finally.
+    table.attach_keyboard_listener(asyncio.get_running_loop())
     started = time.monotonic()
-    results = await scan(
-        tasks=tasks,
-        protocol=args.protocol,
-        judge_url=judge_url,
-        public_ip=public_ip,
-        concurrency=args.concurrency,
-        retries=args.retries,
-        access_urls=access_urls,
-        tunnel_test=args.tunnel_test,
-        send_identity=send_identity,
-        table=table,
-        writer=writer,
-    )
+    try:
+        results = await scan(
+            tasks=tasks,
+            protocol=args.protocol,
+            judge_url=judge_url,
+            public_ip=public_ip,
+            concurrency=args.concurrency,
+            retries=args.retries,
+            access_urls=access_urls,
+            tunnel_test=args.tunnel_test,
+            send_identity=send_identity,
+            table=table,
+            writer=writer,
+            no_judge=args.no_judge,
+            quit_event=quit_event,
+            force_event=force_event,
+            pause_event=pause_event,
+            access_timeout=args.access_timeout,
+            access_strict=args.access_strict,
+        )
+    finally:
+        table.detach_keyboard_listener()
     table.finish()
     elapsed = time.monotonic() - started
+
+    # Force quit ('q' iki kez basıldı): SONUÇ kutusu ve reputation update'i
+    # ATLA, ama EXIT ETMEDEN ÖNCE writer.finalize() çağır ki o ana kadar
+    # bulunan good proxy'ler `-o` dosyasına yazılsın. Aksi halde `-o`
+    # ESKİ HALİYLE kalırdı ve bu run'da bulunanlar kaybolurdu.
+    #
+    # Reputation update'in atlanma sebebi farklı: yarıda kesilen tarama'nın
+    # yanıltıcı veriyle DB'yi kirletmesi (yarısı skipped olan run
+    # consecutive_failures sayacını shoot etmemeli).
+    if force_event.is_set():
+        writer.finalize()  # `-o` dosyasına o ana kadarki bulguları yaz
+        if reputation is not None:
+            reputation.close()
+        sys.stderr.write(f"{_paint('proxyprof:', _C_DIM)} {t('misc.force_quit_finished')}\n")
+        return 130  # SIGINT konvansiyonu — yarıda kesildi
 
     # Reputation'ı güncelle — IP-poison ile pre-skipped olanlar (r.skipped=True
     # AND r.bucket reputation'dan geliyor) DB'ye değişiklik yapmamalı; onlar
     # için consecutive_failures artırılmamalı çünkü gerçek probe çalışmadı.
+    # Quit-skipped'ler de (quit_event ile skip edilenler) atlanır — aynı sebep.
     if reputation is not None:
         real_results = [r for r in results if not r.skipped]
         reputation.record_results(real_results, run_index, now_epoch())
@@ -2114,7 +3585,10 @@ async def amain(args: argparse.Namespace) -> int:
             else:
                 counts["bad"] += 1
             continue
-        counts[r.level] += 1
+        # --no-judge mode'da r.level None — counts[None] KeyError verir;
+        # level sayımı conditional.
+        if r.level is not None:
+            counts[r.level] += 1
         if r.distorting:
             counts["distorting"] += 1
         if r.tunnel_ok is True:
@@ -2126,12 +3600,12 @@ async def amain(args: argparse.Namespace) -> int:
             countries[r.country] += 1
 
         # Filtre sayaçları — neden output'a girmediğini RESULT kutusunda göster.
-        # outbound_ip None: judge response eksik (CF challenge / DNS hijack /
-        # kesik body). _passes_output_filters bunu zaten False döndürür.
-        if r.outbound_ip is None:
+        # outbound_ip None: judge response eksik. --no-judge mode'da bu
+        # NORMAL → sayıma katmıyoruz.
+        if r.outbound_ip is None and not r.judge_skipped:
             counts["judge_incomplete"] += 1
             continue
-        if r.level > args.level:
+        if r.level is not None and r.level > args.level:
             continue
         if access_urls and not r.access_ok:
             counts["blocked"] += 1
@@ -2211,9 +3685,93 @@ async def amain(args: argparse.Namespace) -> int:
 _C_RESET   = "\033[0m"
 _C_BOLD    = "\033[1m"
 _C_DIM     = "\033[2m"
+_C_RED     = "\033[31m"
 _C_GREEN   = "\033[32m"
 _C_YELLOW  = "\033[33m"
+_C_BLUE    = "\033[34m"
+_C_MAGENTA = "\033[35m"
 _C_CYAN    = "\033[36m"
+
+# Visible-length hesabı için tüm `\x1b[...m` SGR sekanslarını eşler. Renkli
+# hücreleri box render'da hizalarken ham `len()` yerine bunu kullanıyoruz;
+# aksi halde ANSI escape karakterleri "görünmez" oldukları halde sütuna
+# saydırıp tüm tabloyu kayık gösteriyor.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _visible_len(s: str) -> int:
+    return len(_ANSI_RE.sub("", s))
+
+
+def _strip_ansi(s: str) -> str:
+    return _ANSI_RE.sub("", s)
+
+
+def _pad_left(s: str, width: int) -> str:
+    """`f"{s:<{width}}"` eşdeğeri — ama ANSI escape'leri visible width'e
+    saymaz. Renkli string'ler sola yaslandığında sağa doğru tam doldurur."""
+    pad = width - _visible_len(s)
+    return s + " " * pad if pad > 0 else s
+
+
+def _pad_right(s: str, width: int) -> str:
+    pad = width - _visible_len(s)
+    return " " * pad + s if pad > 0 else s
+
+
+def _paint(s: str, *codes: str) -> str:
+    """Stderr TTY ise `s`'yi ANSI kod(lar) ile sarar; değilse aynen döner.
+    Birden fazla kod verirsen sırayla uygulanır (örn. bold+cyan)."""
+    if not _color_enabled():
+        return s
+    return "".join(codes) + s + _C_RESET
+
+
+# Legend renklendirme: bölüm başlıkları (SEVİYE/LEVEL, SÜTUNLAR/COLUMNS),
+# anonimlik kod sütunu (L1/L2/L2d/L3), erişim reason kodları (mitm/to/err/Nxx)
+# pre-formatted metnin içine post-process ile boyanır. Format string'de
+# alignment bozulmaz — boyama satırın görünür içeriğine değil, ANSI
+# escape'lere genişleme katar.
+_LEGEND_SECTION_RE = re.compile(
+    r"^(  )(SEVİYE|LEVEL|SÜTUNLAR(?: \(✓ = iyi sonuç\))?|COLUMNS(?: \(✓ = desirable outcome\))?)$",
+    re.MULTILINE,
+)
+_LEGEND_LEVEL_RE = re.compile(
+    r"(^    )(L1|L2d|L2|L3)(\b)", re.MULTILINE,
+)
+_LEGEND_COL_RE = re.compile(
+    r"(^    )(TÜNEL|MITM YOK|ERİŞİM|TUNNEL|NO MITM|ACCESS)(\b)", re.MULTILINE,
+)
+
+
+def _colorize_legend(text: str) -> str:
+    if not _color_enabled():
+        return text
+    text = _LEGEND_SECTION_RE.sub(
+        lambda m: m.group(1) + _paint(m.group(2), _C_BOLD, _C_CYAN), text,
+    )
+    # Seviye kodları aynı renk skalasıyla tabloyla uyumlu.
+    _LVL_COLOR = {
+        "L1":  _C_GREEN, "L2": _C_YELLOW, "L2d": _C_MAGENTA, "L3": _C_RED,
+    }
+    text = _LEGEND_LEVEL_RE.sub(
+        lambda m: m.group(1) + _paint(m.group(2), _LVL_COLOR[m.group(2)]),
+        text,
+    )
+    text = _LEGEND_COL_RE.sub(
+        lambda m: m.group(1) + _paint(m.group(2), _C_BOLD), text,
+    )
+    # Reason kodu satırları "Nxx", "to", "err", "mitm", "?" → kırmızı
+    # (hepsi access fail neden kodu). Satır formatı her ikisinde de
+    # "                  CODE  = açıklama" — boşluk + kod + " " + "=".
+    text = re.sub(
+        r"(^\s+)(Nxx|to|err|mitm|\?)(\s+=)",
+        lambda m: m.group(1) + _paint(m.group(2), _C_RED) + m.group(3),
+        text, flags=re.MULTILINE,
+    )
+    # `✓` her yerde yeşil (legend'de "✓ = iyi sonuç" gibi tek geçişler).
+    text = text.replace("✓", _paint("✓", _C_GREEN))
+    return text
 
 # Tek satırlık "header: rest" yapısı: satır non-space ile başlar, içinde ':' YOK,
 # ama satır sonunda ':' var. Argparse section başlıkları (`options:`,
@@ -2394,6 +3952,10 @@ def main(argv: list[str] | None = None) -> int:
         help=t("cli.help.judge", domains=", ".join(_TRUSTED_JUDGE_DOMAINS)),
     )
     g_scan.add_argument(
+        "--no-judge", action="store_true", dest="no_judge",
+        help=t("cli.help.no_judge"),
+    )
+    g_scan.add_argument(
         "--user-agent", metavar="UA", default=None, dest="user_agent",
         help=t("cli.help.user_agent"),
     )
@@ -2412,6 +3974,15 @@ def main(argv: list[str] | None = None) -> int:
     g_scan.add_argument(
         "--no-access-test", action="store_true", dest="no_access_test",
         help=t("cli.help.no_access_test"),
+    )
+    g_scan.add_argument(
+        "--access-strict", action="store_true", dest="access_strict",
+        help=t("cli.help.access_strict"),
+    )
+    g_scan.add_argument(
+        "--access-timeout", type=float, default=None, metavar="SECONDS",
+        dest="access_timeout",
+        help=t("cli.help.access_timeout"),
     )
     g_scan.add_argument(
         "--tunnel-test", action=argparse.BooleanOptionalAction, default=None,
@@ -2450,6 +4021,10 @@ def main(argv: list[str] | None = None) -> int:
         metavar="SECONDS",
         help=t("cli.help.cold_timeout", default=DEFAULT_COLD_TIMEOUT),
     )
+    g_scan.add_argument(
+        "--top-n", type=int, default=None, metavar="N", dest="top_n",
+        help=t("cli.help.top_n"),
+    )
 
     # --- output filters -------------------------------------------------
     g_filter = p.add_argument_group(
@@ -2474,7 +4049,9 @@ def main(argv: list[str] | None = None) -> int:
         help=t("cli.help.exclude_country"),
     )
     g_filter.add_argument(
-        "--exclude-distorting", action="store_true",
+        "--exclude-distorting",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help=t("cli.help.exclude_distorting"),
     )
     # --allow-* flag'leri: test çalışır ama başarısızlar output'tan ATIL-
@@ -2501,6 +4078,12 @@ def main(argv: list[str] | None = None) -> int:
     g_out.add_argument(
         "-o", "--output", metavar="FILE",
         help=t("cli.help.output"),
+    )
+    g_out.add_argument(
+        "--retest-output",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=t("cli.help.retest_output"),
     )
     g_out.add_argument(
         "-v", "--verbose", action="store_true",
@@ -2530,6 +4113,14 @@ def main(argv: list[str] | None = None) -> int:
         help=t("cli.help.db_stats"),
     )
     g_misc.add_argument(
+        "--export-good", action="store_true", dest="export_good",
+        help=t("cli.help.export_good"),
+    )
+    g_misc.add_argument(
+        "--verify-gatekeepers", action="store_true", dest="verify_gatekeepers",
+        help=t("cli.help.verify_gatekeepers"),
+    )
+    g_misc.add_argument(
         "--debug", nargs="?", const="debug.log",
         default=None, metavar="FILE", dest="debug",
         help=t("cli.help.debug"),
@@ -2553,12 +4144,12 @@ def main(argv: list[str] | None = None) -> int:
             _DEBUG = _DebugLogger(args.debug)
         except OSError as e:
             print(
-                f"proxyprof: {t('misc.cannot_open_debug', path=args.debug, err=e)}",
+                f"{_paint('proxyprof:', _C_DIM)} {t('misc.cannot_open_debug', path=args.debug, err=e)}",
                 file=sys.stderr,
             )
             return 1
         print(
-            f"proxyprof: {t('misc.debug_enabled', path=args.debug)}",
+            f"{_paint('proxyprof:', _C_DIM)} {t('misc.debug_enabled', path=args.debug)}",
             file=sys.stderr,
         )
 
@@ -2567,6 +4158,10 @@ def main(argv: list[str] | None = None) -> int:
     # olmadığı için kontrolü manuel yapıyoruz).
     if args.db_stats:
         return _show_db_stats(args)
+    if args.export_good:
+        return _export_good(args)
+    if args.verify_gatekeepers:
+        return _verify_gatekeepers(args)
 
     if not args.protocol:
         p.error(t("misc.protocol_required"))
@@ -2586,7 +4181,7 @@ def main(argv: list[str] | None = None) -> int:
         target = Path(args.reputation)
         if legacy.exists() and not target.exists() and not args.no_reputation:
             print(
-                f"proxyprof: {t('misc.legacy_db_hint', legacy=legacy, target=target)}",
+                f"{_paint('proxyprof:', _C_DIM)} {t('misc.legacy_db_hint', legacy=legacy, target=target)}",
                 file=sys.stderr,
             )
 

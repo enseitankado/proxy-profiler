@@ -63,6 +63,20 @@ DEFAULT_WEIGHTS: dict[str, int] = {
 }
 
 
+def _scrub(s: str | None) -> str | None:
+    r"""SQLite/UTF-8'in saklayamayacağı lone surrogate'leri (\udcXX gibi)
+    `?` ile değiştir.
+
+    Bazı network kütüphaneleri (ssl, getaddrinfo) hata mesajlarında
+    `surrogateescape` ile yanmış byte'lar geri verir. `executemany` o satıra
+    geldiğinde tüm transaction patlar — 150k başarılı upsert kaybedilir.
+    Tek bir kötü karakter yüzünden DB'yi feda etmemek için yazma sırasında
+    temizlik yaparız."""
+    if s is None:
+        return None
+    return s.encode("utf-8", "replace").decode("utf-8", "replace")
+
+
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS proxy (
     proxy                TEXT PRIMARY KEY,
@@ -114,12 +128,26 @@ class Record:
     last_elapsed: float | None
 
 
-def default_db_path() -> Path:
-    """XDG-style default: $XDG_CONFIG_HOME/proxyprof/state.db veya
-    ~/.config/proxyprof/state.db."""
+def default_db_dir() -> Path:
+    """XDG-style config dizini: $XDG_CONFIG_HOME/proxyprof veya
+    ~/.config/proxyprof."""
     import os
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(base) / "proxyprof" / "state.db"
+    return Path(base) / "proxyprof"
+
+
+def default_db_path(protocol: str | None = None) -> Path:
+    """Protokole özel reputation DB yolu.
+
+    Protokol verilirse `state-<protocol>.db` (örn. state-http.db,
+    state-socks5.db). Verilmezse legacy `state.db` — geri uyumluluk için
+    ve `--db-stats` global enumerasyonu için kullanılır.
+
+    Protokol ayrımı: aynı IP:PORT farklı protokollerde farklı geçmiş
+    yazar; http'de iyi olan socks5'te ölü olabilir, sayaçlar karışmaz.
+    """
+    name = f"state-{protocol}.db" if protocol else "state.db"
+    return default_db_dir() / name
 
 
 class Reputation:
@@ -198,6 +226,42 @@ class Reputation:
                 out[row["proxy"]] = Record(**dict(row))
         return out
 
+    def list_good(
+        self,
+        dead_threshold: int = DEFAULT_DEAD_THRESHOLD,
+        now: int | None = None,
+    ) -> list[str]:
+        """DB'deki HOT + WARM proxy'leri 'iyilik' sırasında döndür.
+
+        Tanım `classify()` ile uyumlu:
+          - HOT  : last_success ∈ [now - 24h, now]
+          - WARM : total_successes > 0 AND consecutive_failures < dead_threshold
+                   AND HOT değil
+          - COLD : consecutive_failures >= dead_threshold → dışarıda
+          - NEW  : DB'de yok → bu fonksiyon zaten DB'den çekiyor, NEW olamaz
+
+        Sıralama: HOT first (last_success desc), sonra WARM (last_success desc).
+        En güvenli proxy'ler ilk satırlarda; uygulama ilk N'i alıp kullanabilir.
+
+        Tarama YAPMAZ; sadece DB sorgusu. `--export-good` modunda kullanılır.
+        """
+        if now is None:
+            now = int(time.time())
+        hot_cutoff = now - HOT_WINDOW_SECONDS
+        cur = self.conn.execute(
+            """
+            SELECT proxy FROM proxy
+            WHERE total_successes > 0
+              AND consecutive_failures < ?
+            ORDER BY
+                CASE WHEN last_success >= ? THEN 0 ELSE 1 END,
+                COALESCE(last_success, 0) DESC,
+                proxy
+            """,
+            (dead_threshold, hot_cutoff),
+        )
+        return [row[0] for row in cur.fetchall()]
+
     # ---- writes -------------------------------------------------------
 
     def mark_seen(self, proxies: list[str], now: int) -> None:
@@ -218,6 +282,101 @@ class Reputation:
             rows,
         )
         self.conn.commit()
+
+    def summary(
+        self,
+        dead_threshold: int = DEFAULT_DEAD_THRESHOLD,
+        now: int | None = None,
+        country_limit: int = 10,
+    ) -> dict:
+        """DB snapshot — tarama YAPMADAN inspeksiyon için.
+
+        Bucket'lar: NEW yok (NEW = input'ta var DB'de yok demek; sadece
+        DB içeriğine bakarken anlamsız). HOT/WARM/COLD üzerinden dağılım,
+        ek olarak last_status + last_seen age + country dağılımı döner.
+
+        UX: bucket'ların zamanla nereye gittiğini (HOT bekleniyor ama yok,
+        COLD birikmiş mi?) debug etmek için. Reputation iyi mi kötü mü
+        çalışıyor, tarama yapmadan görebilelim.
+        """
+        if now is None:
+            now = int(time.time())
+        cur = self.conn.cursor()
+
+        total = cur.execute("SELECT COUNT(*) FROM proxy").fetchone()[0]
+        hot_cutoff = now - HOT_WINDOW_SECONDS
+        hot = cur.execute(
+            "SELECT COUNT(*) FROM proxy WHERE last_success >= ?",
+            (hot_cutoff,),
+        ).fetchone()[0]
+        cold = cur.execute(
+            "SELECT COUNT(*) FROM proxy "
+            "WHERE consecutive_failures >= ? "
+            "AND (last_success IS NULL OR last_success < ?)",
+            (dead_threshold, hot_cutoff),
+        ).fetchone()[0]
+        warm = total - hot - cold
+
+        statuses = dict(cur.execute(
+            "SELECT last_status, COUNT(*) FROM proxy "
+            "WHERE last_status IS NOT NULL "
+            "GROUP BY last_status",
+        ).fetchall())
+
+        countries = cur.execute(
+            "SELECT last_country, COUNT(*) FROM proxy "
+            "WHERE last_country IS NOT NULL AND last_country != '' "
+            "GROUP BY last_country "
+            "ORDER BY COUNT(*) DESC LIMIT ?",
+            (country_limit,),
+        ).fetchall()
+
+        # last_seen age histogram (kovalar arası overlap yok; her proxy tek
+        # bucket'a düşer çünkü cutoff'lar artan sırada).
+        age_buckets: list[tuple[str, int]] = [
+            ("<1h", 3600),
+            ("<1d", 86_400),
+            ("<7d", 7 * 86_400),
+            ("<30d", 30 * 86_400),
+        ]
+        ages: dict[str, int] = {}
+        upper_cutoff = now + 1  # tüm gelecek timestamp'leri de dahil
+        for label, delta in age_buckets:
+            lower = now - delta
+            n = cur.execute(
+                "SELECT COUNT(*) FROM proxy "
+                "WHERE last_seen >= ? AND last_seen < ?",
+                (lower, upper_cutoff),
+            ).fetchone()[0]
+            ages[label] = n
+            upper_cutoff = lower
+        # Geri kalan: en eski (≥30d)
+        ages["≥30d"] = cur.execute(
+            "SELECT COUNT(*) FROM proxy WHERE last_seen < ?",
+            (now - age_buckets[-1][1],),
+        ).fetchone()[0]
+
+        # Probation skip dağılımı (kaç COLD proxy hangi factor'da takılı)
+        probation_factors = cur.execute(
+            "SELECT consecutive_failures, COUNT(*) FROM proxy "
+            "WHERE consecutive_failures >= ? "
+            "GROUP BY consecutive_failures "
+            "ORDER BY consecutive_failures",
+            (dead_threshold,),
+        ).fetchall()
+
+        return {
+            "db_path": str(self.db_path),
+            "run_index": int(self.get_meta("run_index") or "0"),
+            "total": total,
+            "hot": hot,
+            "warm": warm,
+            "cold": cold,
+            "statuses": statuses,
+            "countries": list(countries),
+            "ages": ages,
+            "probation_factors": list(probation_factors),
+        }
 
     def record_results(
         self,
@@ -251,12 +410,13 @@ class Reputation:
                     status = "ok"
                 ok_rows.append((
                     r.proxy, now, now, now, run_index, now,
-                    status, r.level, r.country, r.outbound_ip, r.elapsed,
+                    status, r.level, _scrub(r.country),
+                    _scrub(r.outbound_ip), r.elapsed,
                 ))
             else:
                 fail_rows.append((
                     r.proxy, now, now, now, run_index,
-                    (r.error or "unknown")[:200],
+                    _scrub((r.error or "unknown")[:200]),
                 ))
 
         if ok_rows:

@@ -13,3 +13,9 @@ STDOUT
 *.db
 *.db-wal
 *.db-shm
+
+# Self-host judge deploy dosyası ve log'u — operatör-spesifik ($LOG_FILE path'i,
+# tankado.com deploy ayarı vs.). Public repoya çıkmasın ki fork edenler
+# kendi PHP host'larına kendi konfigleriyle deploy etsin.
+proxyjudge.php
+proxyjudge.log

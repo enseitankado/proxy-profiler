@@ -1,56 +1,57 @@
 # 🛰️ Proxy Profiler
 
-Bir proxy listesini saniyeler içinde **canlılık**, **anonimlik seviyesi** ve
-isteğe bağlı **erişim testi** açısından profilleyen async Python aracı.
-[Proxine](https://github.com/enseitankado/proxine) tarafından toplanan ham
-listeyi süzmek için tasarlandı.
+> **Language:** **English** · [Türkçe](README.tr.md)
 
-> **Boru hattındaki yeri:** proxine toplar, proxyprof eler.
+An async Python tool that profiles a proxy list in seconds for **reachability**,
+**anonymity level**, and optional **access tests**. Designed to filter the raw
+output produced by [Proxine](https://github.com/enseitankado/proxine).
+
+> **Position in the pipeline:** proxine collects, proxyprof filters.
 > ```
 > proxine http -s | proxyprof http -l 1 -o working.lst
 > ```
 
 ------------------------------------------------------------
 
-## Özellikler
+## Features
 
-- **Async (asyncio)**. 1.000+ proxy'yi eşzamanlı test eder; threading'in tipik
-  RAM şişmesi olmadan.
-- **HTTP / HTTPS / SOCKS4 / SOCKS5** desteği — `aiohttp-socks` üzerinden tek
-  arabirim.
-- **Anonimlik sınıflandırması** (4 alt kategori):
-  - **Elite (L1)** — IP ve proxy varlığı gizli
-  - **Anonymous (L2)** — IP gizli, proxy belli (`Via` / `X-Forwarded-*` ekler)
-  - **Anonymous + Distorting** — IP gizli, **sahte** bir IP enjekte ediliyor
-  - **Transparent (L3)** — gerçek IP sızıyor
-- **HTTPS tünel testi** (`--tunnel-test`). HTTP/HTTPS proxy'ler için CONNECT
-  desteği ölçülür (gstatic.com/generate_204'e 204 yanıtı şart). SOCKS doğası
-  gereği tünel'er, otomatik geçilir.
-- **Multi-URL erişim testi** (`-a https://a,https://b`). Hepsi geçmek
-  zorunda — birden çok gatekeeper'a karşı süzgeç.
-- **Hız metrikleri.** Tüm başarılı sondajların p50/p95 latency'si özette
-  raporlanır.
-- **Geolokasyon** (CF judge ile, ücretsiz). Kendi Cloudflare-korumalı
-  judge'ınızı kullanıyorsanız `CF-IPCountry` header'ı otomatik çıkarılıp her
-  proxy'nin çıkış ülkesi rapor edilir — ekstra API çağrısı yok.
-- **Yaşayan judge seçimi.** İçeride 9 HTTP + 3 HTTPS judge listesi var; ilk
-  yanıt veren kullanılır. `-j` ile özel judge geçilebilir.
-- **Proxine-uyumlu boru hattı.** Default girdi stdin, default çıktı stdout
-  (sadece `IP:PORT` satırları); progress/özet stderr'e gider.
-- **Tek-satır TTY progress** + sonda Unicode kutu özet — proxine ile aynı
-  görsel dil.
+- **Async (asyncio).** Tests 1,000+ proxies concurrently without the RAM bloat
+  typical of threading.
+- **HTTP / HTTPS / SOCKS4 / SOCKS5** support via `aiohttp-socks` — a single
+  interface.
+- **Anonymity classification** (4 sub-categories):
+  - **Elite (L1)** — IP and proxy presence both hidden
+  - **Anonymous (L2)** — IP hidden, proxy disclosed (`Via` / `X-Forwarded-*`)
+  - **Anonymous + Distorting** — IP hidden, **fake** IP injected
+  - **Transparent (L3)** — real IP leaks
+- **HTTPS tunnel test** (`--tunnel-test`). For HTTP/HTTPS proxies the CONNECT
+  capability is measured (a 204 response to gstatic.com/generate_204 is
+  required). SOCKS tunnels by design and is automatically passed.
+- **Multi-URL access test** (`-a https://a,https://b`). All must succeed — a
+  filter against multiple gatekeepers.
+- **Speed metrics.** p50/p95 latency of all successful probes is reported in
+  the summary.
+- **Geolocation** (with a CF judge, free). If you use your own
+  Cloudflare-protected judge, the `CF-IPCountry` header is parsed automatically
+  and each proxy's exit country is reported — no extra API call.
+- **Live judge selection.** 9 HTTP + 3 HTTPS judges are bundled; the first to
+  answer is used. `-j` overrides with a custom judge.
+- **Proxine-compatible pipeline.** Default input stdin, default output stdout
+  (only `IP:PORT` lines); progress/summary goes to stderr.
+- **Single-line TTY progress** + Unicode summary boxes at the end — the same
+  visual language as proxine.
 
 ------------------------------------------------------------
 
-## Kurulum
+## Installation
 
-Python ≥ 3.10 gerekir.
+Python ≥ 3.10 required.
 
 ```bash
 git clone https://github.com/enseitankado/proxy-profiler.git
 cd proxy-profiler
 
-# venv önerilir
+# venv recommended
 python3 -m venv .venv
 source .venv/bin/activate
 
@@ -58,120 +59,123 @@ pip install .
 proxyprof --help
 ```
 
-Veya bağımlılıkları doğrudan yükleyip script'i çalıştırabilirsiniz:
+Or install the dependencies directly and run the script:
 
 ```bash
 pip install aiohttp aiohttp-socks
 ./proxyprof.py --help
 ```
 
-> **Eksik bağımlılık:** proxyprof TTY'de çalışırken `aiohttp` veya
-> `aiohttp-socks` yüklü değilse **tek bir soru** sorar:
+> **Missing dependency:** When running on a TTY without `aiohttp` or
+> `aiohttp-socks` installed, proxyprof asks **one question**:
 > *"Auto-setup will create ./.venv and install aiohttp aiohttp-socks there… Proceed? [Y/n]"*.
-> `Y` denirse yerel `.venv` oluşturulur, pip gerekirse `get-pip.py` ile
-> bootstrap edilir, paketler yüklenir, proxyprof venv'in Python'uyla yeniden
-> başlatılır. Sudo veya sistem-paket değişikliği yoktur, PEP 668 kısıtlamasına
-> takılmaz. Sonraki çalıştırmalarda `python3 proxyprof.py` komutu yerel
-> `.venv`'i sessizce tespit eder; ek soru çıkmaz.
+> Answering `Y` creates a local `.venv`, bootstraps pip via `get-pip.py` if
+> needed, installs the packages, and restarts proxyprof with the venv's
+> Python. No sudo, no system-package changes, no PEP 668 friction. On
+> subsequent runs `python3 proxyprof.py` silently picks up the local `.venv`;
+> the prompt does not reappear.
 >
-> Boru hatlarında (TTY değilken) prompt çıkmaz; statik hata mesajıyla çıkar ki
-> script'iniz yanıltıcı bir cevap beklemesine takılmasın.
+> In pipelines (non-TTY) the prompt is skipped; the script exits with a
+> static error message so your shell pipeline does not hang waiting for an
+> answer it can't give.
 
 ------------------------------------------------------------
 
-## Kullanım
+## Usage
 
 ```bash
-proxyprof <http|https|socks4|socks5> [seçenekler]
+proxyprof <http|https|socks4|socks5> [options]
 ```
 
-### Bayraklar
+### Flags
 
-`--help` çıktısı üç gruba ayrılır: **scan & probes**, **output filters**,
-**output destination**. Aşağıdaki tablo da bu sıraya göre düzenlenmiş.
+`--help` output is split into three groups: **scan & probes**, **output
+filters**, **output destination**. The table below follows that order.
 
-**scan & probes** (network davranışı, probe seçimi — ekstra istek maliyeti olabilir):
+**scan & probes** (network behavior, probe selection — may incur extra
+request cost):
 
-| Uzun | Kısa | Varsayılan | Açıklama |
+| Long | Short | Default | Description |
 |---|---|---|---|
-| `--file` | `-f` | stdin | Proxy listesi dosyası. `-` veya bayrak yok = stdin. |
-| `--concurrency` | `-c` | `500` | Eşzamanlı sonda sayısı. |
-| `--timeout` | `-T` | `5` | Proxy başına timeout (saniye). |
-| `--retries` | `-r` | `1` | Başarısız proxy başına tekrar deneme. |
-| `--judge` | `-j` | otomatik | Özel azenv.php-uyumlu judge URL'i. CF judge önerilir. Kimlik header'ı yalnız hardcoded güvenilir domain'lere gider — bkz. *Cloudflare-aware judge*. |
-| `--access-test [URLS]` | — | kapalı | Çoklu gatekeeper süzgeci. Değer verilmezse dahili CF-listesinden 3 rastgele site, virgüllü URL listesi verilirse o URL'ler kullanılır. |
-| `--tunnel-test` / `--no-tunnel-test` | — | **açık** | HTTPS CONNECT testi. SOCKS için de probe tetikleyici (MITM testi probe'a bağlı). `--no-tunnel-test` HTTPS probe'unu tamamen kapatır (MITM testi de implicit olarak devre dışı). |
-| `--mitm-test` / `--no-mitm-test` | — | **açık** | MITM tespiti: TLS cert doğrulama başarısız olur ama CONNECT açıldıysa proxy MITM-suspected sayılır. Aynı HTTPS probe kullanılır — ek istek maliyeti yoktur. `--no-mitm-test` MITM filtresini kapatır (probe yine çalışırsa metrik raporlanır). |
-| `--reputation PATH` | — | `~/.config/proxyprof/state.db` | SQLite reputation DB. HOT/WARM/NEW/COLD bucket sınıflandırması + üstel probation için kullanılır. Detay: [Reputation & probation](#reputation--probation-düzenli-tarama). |
-| `--no-reputation` | — | — | Reputation'ı tamamen kapat — stateless. |
-| `--dead-threshold N` | — | `3` | COLD bucket'a girmek için gereken üst üste fail sayısı. |
-| `--probation-max-skip N` | — | `64` | COLD probation'ın atlama tavanı. En kötü ihtimalde her N run'da bir test edilir. |
-| `--cold-timeout SECONDS` | — | `2.0` | COLD bucket için per-proxy timeout. |
+| `--file` | `-f` | stdin | Proxy list file. `-` or omitted = stdin. |
+| `--concurrency` | `-c` | `500` | Concurrent probe count. |
+| `--timeout` | `-T` | `5` | Per-proxy timeout (seconds). |
+| `--retries` | `-r` | `1` | Retries per failed proxy. |
+| `--judge` | `-j` | auto | Custom azenv.php-compatible judge URL. CF judge recommended. Identity header is sent only to hardcoded trusted domains — see *Cloudflare-aware judge*. |
+| `--access-test [URLS]` | — | off | Multi-gatekeeper filter. With no value, 3 random sites are picked from the built-in CF list; a comma-separated URL list uses those instead. |
+| `--tunnel-test` / `--no-tunnel-test` | — | **on** | HTTPS CONNECT test. Also the trigger probe for SOCKS (MITM test piggy-backs on it). `--no-tunnel-test` disables the HTTPS probe entirely (implicitly disabling MITM as well). |
+| `--mitm-test` / `--no-mitm-test` | — | **on** | MITM detection: if TLS cert validation fails but CONNECT succeeded, the proxy is flagged as MITM-suspected. Same HTTPS probe — no extra request cost. `--no-mitm-test` turns the MITM filter off (the probe still runs if active and the metric is reported). |
+| `--reputation PATH` | — | `~/.config/proxyprof/state.db` | SQLite reputation DB. Drives HOT/WARM/NEW/COLD bucket classification + exponential probation. See [Reputation & probation](#reputation--probation-recurring-scans). |
+| `--no-reputation` | — | — | Disable reputation entirely — stateless. |
+| `--dead-threshold N` | — | `3` | Consecutive failures required to enter the COLD bucket. |
+| `--probation-max-skip N` | — | `64` | Upper bound on COLD probation skips. At worst a proxy is tested every N runs. |
+| `--cold-timeout SECONDS` | — | `2.0` | Per-proxy timeout used for the COLD bucket. |
 
-**output filters** (post-scan, ek istek maliyeti yok — sadece çıktıyı süzer):
+**output filters** (post-scan, no extra request cost — they only gate the
+output list):
 
-| Uzun | Kısa | Varsayılan | Açıklama |
+| Long | Short | Default | Description |
 |---|---|---|---|
-| `--level` | `-l` | `1` | Kabul edilen maks. anonimlik seviyesi. `1`=elite, `2`=elite+anon (distorting dahil), `3`=hepsi. |
-| `--country CC[,CC...]` | — | — | Yalnızca verilen ISO ülke kodlarındaki proxy'leri tut. CF judge gerekir (`PROXY_COUNTRY` döndürmesi için). Örn. `--country TR,US`. |
-| `--exclude-distorting` | — | kapalı | Sahte IP enjekte eden (distorting) proxy'leri çıkar. Default kapalı: distorting'ler `--level 2`'yi normal geçer. |
+| `--level` | `-l` | `1` | Maximum accepted anonymity level. `1`=elite, `2`=elite+anon (distorting included), `3`=all. |
+| `--country CC[,CC...]` | — | — | Keep only proxies in the given ISO country codes. Requires a CF judge (to surface `PROXY_COUNTRY`). E.g. `--country TR,US`. |
+| `--exclude-distorting` | — | off | Drop proxies that inject a fake IP. Off by default: distorting proxies pass `--level 2` normally. |
 
-**output destination** (çıktının nereye gideceği):
+**output destination** (where the output goes):
 
-| Uzun | Kısa | Varsayılan | Açıklama |
+| Long | Short | Default | Description |
 |---|---|---|---|
-| `--output` | `-o` | stdout | Süzülmüş listeyi bu dosyaya yaz; stdout boş kalır. |
-| `--silent` | `-s` | — | Yalnız stdout (proxy listesi); tüm stderr susturulur. |
-| `--verbose` | `-v` | — | (Deprecated, no-op) Canlı tablo artık varsayılan. |
+| `--output` | `-o` | stdout | Write the filtered list to this file; stdout stays empty. |
+| `--silent` | `-s` | — | Stdout-only (proxy list); all stderr is muted. |
+| `--verbose` | `-v` | — | (Deprecated, no-op) the live table is the default now. |
 
-**misc** (yerelleştirme ve yardımcı):
+**misc** (localization and helpers):
 
-| Uzun | Kısa | Varsayılan | Açıklama |
+| Long | Short | Default | Description |
 |---|---|---|---|
-| `--lang` | `-L` | sistem locale | UI dili. Mevcut: `en`, `tr`. `PROXYPROF_LANG` env değişkeni de geçerli. Detay: [Yerelleştirme](#yerelleştirme-localization). |
+| `--lang` | `-L` | system locale | UI language. Available: `en`, `tr`. `PROXYPROF_LANG` env var also accepted. See [Localization](#localization). |
 
-### Örnekler
+### Examples
 
 ```bash
-# Proxine ile zincir: HTTP proxy'leri topla, sadece elite olanları çıkar
+# Chain with proxine: collect HTTP proxies, keep only the elite ones
 proxine http -s | proxyprof http -l 1 -o elite.lst
 
-# Dosyadan oku, elite + anonymous tut, dosyaya yaz
+# Read from file, keep elite + anonymous, write to file
 proxyprof http -f raw.lst -l 2 -o filtered.lst
 
-# SOCKS5 listesi, 1000 eşzamanlı, 8s timeout, satır satır log
+# SOCKS5 list, 1000 concurrent, 8s timeout, per-line log
 proxyprof socks5 -f socks5.lst -c 1000 -T 8 -v
 
-# Cloudflare gatekeeper süzgeci (3 random CF sitesine erişim şart)
+# Cloudflare gatekeeper filter (must reach 3 random CF sites)
 proxyprof http -f raw.lst --access-test
 
-# Kendi belirlediğin gatekeeper'larla
+# With your own gatekeepers
 proxyprof http -f raw.lst --access-test https://www.cloudflare.com,https://www.google.com
 
-# Tünel testini kapat (daha hızlı, daha az kaliteli sonuç)
+# Skip the tunnel test (faster, lower-quality results)
 proxyprof http -f raw.lst --no-tunnel-test
 
-# Output filter'ları: yalnızca TR ve US elite, distorting yok
+# Output filters: keep only TR and US elite, no distorting
 proxyprof http -f raw.lst --country TR,US --exclude-distorting
 
-# MITM filtresini kapat (proxy MITM yapsa da kabul et — debug için)
+# Disable the MITM filter (accept MITM proxies too — for debugging)
 proxyprof http -f raw.lst --no-mitm-test
 
-# Kendi Cloudflare-korumalı judge'ınla: ülke bilgisi + ziyaret log'u
+# With your own Cloudflare-protected judge: country info + visit log
 proxyprof http -f raw.lst -j https://yours.tld/proxyjudge.php \
-  --judge-domain yours.tld          # X-Proxyprof-Proxy header'ı buraya gider
+  --judge-domain yours.tld          # X-Proxyprof-Proxy header goes here
 
-# Tamamen sessiz; başka bir script'e besleme
+# Fully silent; feed another script
 proxine socks5 -s | proxyprof socks5 -s | head -20
 ```
 
 ------------------------------------------------------------
 
-## Çıktı
+## Output
 
 ### Stdout
 
-Sıralı, dedupe edilmiş, süzgeçten geçen `IP:PORT` satırları:
+Sorted, deduplicated, filtered `IP:PORT` lines:
 
 ```
 1.2.3.4:8080
@@ -179,11 +183,11 @@ Sıralı, dedupe edilmiş, süzgeçten geçen `IP:PORT` satırları:
 5.6.7.8:3128
 ```
 
-`-o FILE` verilirse stdout boş kalır; satırlar dosyaya yazılır.
+If `-o FILE` is set, stdout stays empty; the lines go to the file.
 
-### Stderr — canlı tablo + progress + CONFIG/RESULT kutuları
+### Stderr — live table + progress + CONFIG/RESULT boxes
 
-Tarama akarken stderr şu yapıdadır:
+While a scan runs, stderr looks like this:
 
 ```
 ┌───────┬────────┬───────┬───────────────────────┬────────┬─────────────────┬─────────┬────────┬────────┬──────┬────────┐
@@ -197,56 +201,86 @@ Tarama akarken stderr şu yapıdadır:
  LEVEL: L1=Elite · L2=Anonymous · L2d=Anonymous+Distorting · L3=Transparent   ·   — = data unavailable (test not run or judge didn't return)
 ```
 
-`MITM=×` üçüncü satırda: proxy CONNECT tüneli kurabildi (`TUNNEL=✓`) ama TLS
-sertifika doğrulama başarısız oldu — proxy TLS chain'i kendi sertifikasıyla
-kırıyor, **MITM imzası**. STATUS `filter`'a düşer ve stdout'a yazılmaz.
+`MITM=×` on the third row: the proxy could open a CONNECT tunnel (`TUNNEL=✓`)
+but TLS certificate validation failed — the proxy breaks the TLS chain with
+its own certificate, a **MITM signature**. STATUS drops to `filter` and the
+proxy is not written to stdout.
 
-Progress satırının altında her güncellemede legend görünür: seviye kodlarının
-açık karşılıkları (L1/L2/L2d/L3) ve "—" işaretinin anlamı — tabloda bir
-sütunda "—" görünüyorsa o test çalışmadı veya judge ilgili alanı döndürmedi
-(örn. public azenv'da COUNTRY yoktur, MITM testi `--no-tunnel-test` ile
-kapalıysa MITM sütunu —, vs.).
+A legend appears under the progress line on every update: it explains the
+level codes (L1/L2/L2d/L3) and what `—` means in a cell — if a column shows
+`—`, that test did not run or the judge did not return that field (e.g. a
+public azenv does not include COUNTRY; with `--no-tunnel-test` the MITM
+column is `—`; etc.).
 
-**Tablo davranışı:**
+**Table behavior:**
 
-- Yalnız **başarılı** proxy'ler tabloda satır olur. Fail'ler görünmez ama
-  progress satırındaki `fail:N` sayımı artar — gürültüyü tablodan ayırır.
-- Satırlar tamamlanma sırasıyla gelir (en hızlı önce; `#` bu sırayı, total ise
-  toplam hedefi gösterir → `3/30`, `7/30` arada atlamalar fail'lerin yerini
-  belli eder).
-- En alt satır canlı progress: tamamlanan / toplam, ok / fail sayımları,
-  elapsed. ANSI cursor manipülasyonu ile yerinde güncellenir; pipe ortamında
-  (stderr TTY değilken) sadece final progress yazılır.
+- Only **successful** proxies become rows. Failures don't appear but the
+  `fail:N` counter on the progress line increments — separating noise from
+  the table.
+- Rows arrive in completion order (fastest first; `#` shows that order, the
+  total being your target → `3/30`, `7/30` with gaps marking where failures
+  fell).
+- The bottom line is the live progress: completed / total, ok / fail counts,
+  elapsed. Updated in place via ANSI cursor manipulation; in a pipe (stderr
+  not a TTY) only the final progress is written.
 
-**Sütunlar:**
+**Columns:**
 
-| Sütun | Anlamı |
+| Column | Meaning |
 |---|---|
-| `#` | Tamamlanma sırası / toplam |
-| `STATUS` | `ok` (her şey geçti) · `filter` (judge geçti, tunnel/access/mitm düştü) |
-| `BUCKET` | Reputation grubu: `HOT` / `WARM` / `NEW` / `COLD` (reputation kapalıyken `—`). Türkçe arayüzde `SICAK` / `ILIK` / `YENİ` / `SOĞUK`. |
+| `#` | Completion order / total |
+| `STATUS` | `ok` (everything passed) · `filter` (judge passed, tunnel/access/mitm dropped) |
+| `BUCKET` | Reputation group: `HOT` / `WARM` / `NEW` / `COLD` (`—` when reputation off). In the Turkish UI: `SICAK` / `ILIK` / `YENİ` / `SOĞUK`. |
 | `PROXY` | IP:PORT |
-| `LEVEL` | `L1` elite · `L2` anonymous · `L2d` anonymous + distorting (sahte IP enjekte) · `L3` transparent |
-| `OUTBOUND` | Judge'ın gördüğü çıkış IP'si (proxy'nin dış adresi) |
-| `COUNTRY` | ISO ülke kodu (CF judge kullanılırsa) |
-| `TIME` | Toplam test süresi |
-| `TUNNEL` | Tunnel testi: `✓` CONNECT açıldı · `×` kapalı · `—` test yok |
-| `MITM` | TLS chain durumu: `✓` temiz · `×` MITM tespit edildi · `—` test yok |
-| `ACCESS` | Access testi: `✓` tüm gatekeeper'lara ulaştı · `×` en az biri fail · `—` test yok |
+| `LEVEL` | `L1` elite · `L2` anonymous · `L2d` anonymous + distorting (fake IP injected) · `L3` transparent |
+| `OUTBOUND` | The exit IP the judge sees (the proxy's outside address) |
+| `COUNTRY` | ISO country code (with a CF judge) |
+| `TIME` | Total probe time |
+| `TUNNEL` | Tunnel test: `✓` CONNECT opened · `×` closed · `—` not tested |
+| `MITM` | TLS chain status: `✓` clean · `×` MITM detected · `—` not tested |
+| `ACCESS` | Access test: `✓` reached all gatekeepers · `×` at least one failed · `—` not tested |
 
-**Bir sütunda `—` ne demek?** İlgili test çalıştırılmadı veya judge o alanı
-döndürmedi:
-- `BUCKET` → `--no-reputation` ile reputation kapalı
-- `COUNTRY` → judge ülke alanı vermedi (public azenv'lar vermez; CF judge verir)
-- `OUTBOUND` → judge `REMOTE_ADDR` alanı dönmedi
-- `TUNNEL` → `--no-tunnel-test` ile devre dışı
-- `MITM` → tunnel testi kapalı (MITM aynı probe'a dayalı)
-- `ACCESS` → `--no-access-test` ile devre dışı
+**What does `—` mean in a column?** The relevant test did not run or the
+judge did not return that field:
+- `BUCKET` → reputation off via `--no-reputation`
+- `COUNTRY` → judge did not return a country (public azenv judges don't; CF judge does)
+- `OUTBOUND` → judge did not return `REMOTE_ADDR`
+- `TUNNEL` → disabled via `--no-tunnel-test`
+- `MITM` → tunnel test off (MITM rides the same probe)
+- `ACCESS` → disabled via `--no-access-test`
 
-**Tarama bittikten sonra** progress'in altında iki kutu sırayla yazılır.
+#### What does `mitm` mean in the `ACCESS` column?
 
-**CONFIG** — tarama parametrelerinin key=value referansı (aynı taramayı
-tekrarlamak için tüm bayraklar görünür):
+When you see `mitm` in an `ACCESS` cell, it means the TLS handshake during
+the access probe **rejected** the certificate chain because it found a
+**self-signed cert** in it. In other words, the proxy returned its **own
+cert** instead of the real `cloudflare.com` cert — a textbook MITM
+signature. Both `_access_check_one` (`proxyprof.py:941`) and `_https_probe`
+trigger `mitm_suspected` from the same signal; two independent paths arrive
+at the same finding → no "coincidence" possible. Running with
+`--debug log.jsonl` reveals the raw exception:
+`[SSL: CERTIFICATE_VERIFY_FAILED] ... self-signed certificate in certificate chain`.
+
+Observed patterns:
+- Almost all of these IPs sit on port `:4145` (the conventional SOCKS4
+  daemon port), most of them in the `67.x / 68.71.x / 70.166.x / 72.x /
+  74.x / 98.x` blocks — public-listed proxies **deliberately** set up to
+  decrypt HTTPS for credential skimming or ad injection ("honeypot"
+  proxies).
+- `to` / `err` / `?` are **not** MITM — they mean timeout, ordinary network
+  error (ConnectionReset / ServerDisconnected / payload), and unexpected
+  exception, respectively. `mitm` is set **only** for cert verification
+  failures.
+
+A 20–30% MITM rate is normal for SOCKS4 lists; the rate is **sector-driven**
+(the `:4145` honeypot cluster dominates the access list), not a false
+positive in proxyprof. `--no-mitm-test` will keep these proxies in the
+output but the flag will still appear in the table.
+
+**After the scan ends** two boxes are written below the progress.
+
+**CONFIG** — a key=value reference of the scan parameters (all flags visible
+so the same scan can be reproduced):
 
 ```
 ┌ CONFIG ─────┬──────────────────────────────────────────────┐
@@ -261,11 +295,10 @@ tekrarlamak için tüm bayraklar görünür):
 │ retries     │ 1                                            │
 │ tunnel-test │ on                                           │
 │ access-test │ 3 URLs  (https://www.cloudflare.com/...)     │
-│ identity    │ on                                           │
 └─────────────┴──────────────────────────────────────────────┘
 ```
 
-**RESULT** — tarama sonuçlarının özeti:
+**RESULT** — the scan summary:
 
 ```
 ┌ RESULT ──┬───────────────────────────────────────────────────────────┐
@@ -280,188 +313,188 @@ tekrarlamak için tüm bayraklar görünür):
 └──────────┴───────────────────────────────────────────────────────────┘
 ```
 
-RESULT'taki bazı satırlar koşullu:
-- `blocked` → `--access-test` verildiyse
-- `tunnel` → `--tunnel-test` aktifse (default açık)
-- `country` → judge `PROXY_COUNTRY` / `CF-IPCountry` döndürüyorsa (yani CF judge kullanılıyorsa)
-- `(N distorting)` → en az 1 distorting proxy yakalandıysa
+Some RESULT rows are conditional:
+- `blocked` → only if `--access-test` was given
+- `tunnel` → only if `--tunnel-test` is active (default on)
+- `country` → only if the judge returns `PROXY_COUNTRY` / `CF-IPCountry` (i.e. a CF judge)
+- `(N distorting)` → only when at least 1 distorting proxy was caught
 
-### Çıktı modu tablosu
+### Output mode matrix
 
-| Komut | stdout | stderr |
+| Command | stdout | stderr |
 |---|---|---|
-| `proxyprof http` | süzülmüş liste | canlı tablo → özet kutu |
-| `proxyprof http -o f.lst` | (boş) | canlı tablo → özet kutu |
-| `proxyprof http -s` | süzülmüş liste | (boş) |
-| `proxyprof http -o f.lst -s` | (boş) | (boş) |
+| `proxyprof http` | filtered list | live table → summary box |
+| `proxyprof http -o f.lst` | (empty) | live table → summary box |
+| `proxyprof http -s` | filtered list | (empty) |
+| `proxyprof http -o f.lst -s` | (empty) | (empty) |
 
 ------------------------------------------------------------
 
-## Anonimlik seviyeleri
+## Anonymity levels
 
-Judge'tan geri dönen request header'larına bakılır. Üç seviye + bir alt tür:
+Determined by inspecting the request headers reflected back by the judge.
+Three levels + one sub-type:
 
-| Seviye | İsim | Tespit kuralı | Anlam |
+| Level | Name | Detection rule | Meaning |
 |---|---|---|---|
-| **1** | Elite | Public IP yok, proxy header'ı yok | Hem IP'nizi hem proxy varlığını gizler. |
-| **2** | Anonymous | Public IP yok, ama `via` / `x-forwarded-*` / `proxy-*` var | IP'nizi gizler ama "bir proxy kullanılıyor" der. |
-| **2** + *distorting* | Distorting | L2 + `X-Forwarded-For` benzeri header'da public IP'den farklı, routable bir IPv4 var | IP'nizi gizler **ve sahte bir IP enjekte eder**. Fingerprint kaçırma için kullanılır, güven açısından risklidir. |
-| **3** | Transparent | Public IP header'larda yansıyor | IP'nizi gizlemez; sadece routing yapar. |
+| **1** | Elite | No public IP, no proxy header | Hides both your IP and the fact that a proxy is in use. |
+| **2** | Anonymous | No public IP, but `via` / `x-forwarded-*` / `proxy-*` is present | Hides your IP but says "a proxy is in use." |
+| **2** + *distorting* | Distorting | L2 + an `X-Forwarded-For`-style header carries a routable IPv4 that is not your public IP | Hides your IP **and injects a fake one**. Used for fingerprint evasion; risky for trust. |
+| **3** | Transparent | Public IP appears in some header | Doesn't hide your IP; just routes. |
 
-`-l 1` (default) sadece elite proxy'leri tutar. `-l 2` elite + anonymous
-(distorting dahil), `-l 3` hepsi. Özet kutusunda distorting alt sayımı ayrıca
-gösterilir.
+`-l 1` (default) keeps only elite proxies. `-l 2` keeps elite + anonymous
+(distorting included), `-l 3` keeps all. The distorting sub-count appears
+separately in the summary box.
 
-### Distorting tespitinin sınırı
+### Limits of distorting detection
 
-Header'daki sahte IP **public range'de görünen** bir IPv4 olmalı (RFC1918,
-loopback, link-local elenir). Bir proxy header'a `0.0.0.0` ya da `192.168.1.1`
-yazıyorsa distorting değil — sadece kötü konfigüre edilmiş bir anonymous proxy.
-IPv6 ya da IP olmayan değerler de tespit kapsamı dışında.
+The fake IP in a header must be **a routable IPv4** (RFC1918, loopback,
+link-local are filtered out). A proxy that writes `0.0.0.0` or `192.168.1.1`
+to a header isn't distorting — it's just a badly configured anonymous proxy.
+IPv6 and non-IP values are out of scope for distorting detection.
 
 ------------------------------------------------------------
 
-## Süzgeçler ve metrikler
+## Filters and metrics
 
-Anonimlik dışındaki üç ekstra süzgeç (`--tunnel-test`, `-a`, hız) ve iki ekstra
-metrik (timing percentiles, ülke dağılımı) — hepsi proxine boru hattının
-ötesinde ham listeyi gerçek üretim kalitesine indirgemeye yarar.
+Three extra filters beyond anonymity (`--tunnel-test`, `-a`, speed) and two
+extra metrics (timing percentiles, country distribution) — together they
+take the raw list past the proxine pipeline to production quality.
 
-### HTTPS tünel testi (default açık)
+### HTTPS tunnel test (default on)
 
-**Neden:** Bir HTTP proxy düz HTTP isteklerini iletiyor olabilir ama HTTPS için
-gereken `CONNECT` komutunu desteklemiyor olabilir. Bugün neredeyse her site
-HTTPS olduğundan, CONNECT-yetkisi olmayan HTTP proxy pratik olarak çoğu hedefe
-işe yaramaz.
+**Why:** An HTTP proxy may forward plain HTTP requests but lack the
+`CONNECT` capability HTTPS needs. Today nearly every site is HTTPS, so a
+CONNECT-less HTTP proxy is useless for most practical targets.
 
-**Ne yapar:** Her HTTP/HTTPS proxy için ek bir istek atar:
-`https://www.gstatic.com/generate_204`. 204 dönerse CONNECT destekleniyor
-demektir. SOCKS proxy'leri doğası gereği tünel kurar; otomatik geçilir, ek
-istek yapılmaz.
+**What it does:** Sends one extra request per HTTP/HTTPS proxy:
+`https://www.gstatic.com/generate_204`. A 204 means CONNECT is supported.
+SOCKS proxies tunnel by nature; they pass automatically without an extra
+request.
 
-**Maliyet:** Tarama süresi yaklaşık 2 katına çıkar (HTTP/HTTPS proxy'leri için
-proxy başına 2 istek). Concurrency artırılarak telafi edilebilir.
+**Cost:** Scan time roughly doubles (2 requests per HTTP/HTTPS proxy). You
+can compensate by raising concurrency.
 
-**Kullanım:** Default **açık**. Kapatmak için:
+**Use:** **On** by default. To disable:
 
 ```bash
-proxyprof http -f raw.lst --no-tunnel-test       # CONNECT testini atla
+proxyprof http -f raw.lst --no-tunnel-test       # skip the CONNECT test
 ```
 
-**Sonuç:**
-- Stdout'a (veya `-o` dosyasına) sadece tünel testini geçen proxy'ler yazılır
-- Canlı tabloda `TUN` sütunu: `✓` / `×` / `—`
-- Özet kutuda: `tunnel │ 118 CONNECT-capable (of 197 good)`
+**Result:**
+- Only tunnel-passing proxies make it to stdout (or to the `-o` file)
+- In the live table the `TUN` column: `✓` / `×` / `—`
+- In the summary box: `tunnel │ 118 CONNECT-capable (of 197 good)`
 
-### Çoklu gatekeeper erişim testi (`--access-test`)
+### Multi-gatekeeper access test (`--access-test`)
 
-**Neden:** Bir proxy Cloudflare'i geçebilir ama Google CAPTCHA gösterebilir,
-veya tersine. "Her yerden çalışan" proxy'leri ayıklamak için tek bir gatekeeper
-yeterli değil.
+**Why:** A proxy might pass Cloudflare but get a Google CAPTCHA, or vice
+versa. One gatekeeper is not enough to isolate proxies that "work
+everywhere."
 
-**Ne yapar:** Verdiğiniz URL listesinin **hepsine** proxy üzerinden istek atar.
-Tek bir URL bile fail ederse proxy "blocked" sayılır.
+**What it does:** Sends a request through the proxy to **each** URL you
+specify. A single URL failure marks the proxy as "blocked."
 
-**Kullanım — iki mod:**
+**Use — two modes:**
 
 ```bash
-# Otomatik: dahili CF listesinden 3 rastgele site (her tarama farklı seçim)
+# Auto: 3 random sites from the built-in CF list (different per scan)
 proxyprof http -f raw.lst --access-test
 
-# Manuel: kendi gatekeeper'larını ver (virgülle, hepsi http(s):// ile)
+# Manual: your own gatekeepers (comma-separated, each http(s)://)
 proxyprof http -f raw.lst \
   --access-test https://www.cloudflare.com,https://www.google.com,https://www.wikipedia.org
 ```
 
-Dahili CF listesi: cloudflare.com, discord.com, reddit.com, medium.com,
+Built-in CF list: cloudflare.com, discord.com, reddit.com, medium.com,
 udemy.com, patreon.com, kickstarter.com, upwork.com, zendesk.com,
-shopify.com — hepsinin `/cdn-cgi/trace` endpoint'i kullanılır (her CF site'da
-mevcut, 200 döner, UA filtrelemez).
+shopify.com — each uses the `/cdn-cgi/trace` endpoint (available on every
+CF site, returns 200, doesn't filter by UA).
 
-**Sonuç:**
-- Sadece tüm URL'lere ulaşan proxy'ler stdout'a düşer
-- Canlı tabloda `ACC` sütunu: `✓` / `×` / `—`
-- Özet kutuda: `blocked │ 24 access denied`
+**Result:**
+- Only proxies that reach all URLs reach stdout
+- In the live table the `ACC` column: `✓` / `×` / `—`
+- In the summary box: `blocked │ 24 access denied`
 
-### Hız metrikleri (otomatik)
+### Speed metrics (automatic)
 
-**Neden:** Bir proxy "çalışıyor" demek hızlı olduğu anlamına gelmez. "Liste
-iyi mi?" sorusuna ortalama (`mean`) çoğu zaman yanıltıcı bir cevaptır:
-bir-iki çok yavaş proxy ortalamayı şişirir ya da çok hızlı bir proxy
-kötü dağılımı saklar. Bunun yerine **yüzdelik** (percentile) kullanılır.
+**Why:** "Works" doesn't mean "fast." For "is this list good?" `mean` is
+often misleading: one or two very slow proxies inflate the mean, while one
+very fast proxy hides a bad distribution. Instead, **percentiles** are used.
 
-**Yüzdelik (percentile) ne demek?**
-Bir veri kümesini en küçükten büyüğe sıralarsın, "%X" değeri verinin
-**ilk %X'inin** ne kadar küçük olduğunu söyler.
-- **p50** (medyan): verinin yarısı bu değerden küçük, yarısı büyük.
-- **p95**: verinin %95'i bu değerden küçük, sadece %5'i daha yavaş — yani
-  worst-case'in eşiği.
+**What is a percentile?**
+Sort the data smallest-to-largest; the "Xth" value is the value below which
+the first **X%** of the data fall.
+- **p50** (median): half the data is below this, half above.
+- **p95**: 95% of the data is below this, only 5% is slower — the
+  worst-case threshold.
 
-**Somut bir örnek.** Diyelim 10 proxy taradın ve süreleri (saniye):
+**A concrete example.** Say you tested 10 proxies and got these times
+(seconds):
 ```
 0.4, 0.6, 0.8, 0.9, 1.1, 1.3, 1.5, 2.0, 3.5, 8.0
 ```
-- Ortalama (mean) = (0.4+0.6+…+8.0)/10 = **2.01s** — ama 9 proxy'nin 9'u bu değerden hızlı! Outlier'a (8.0) yenildi.
-- Medyan (p50) = 5. ve 6. değerlerin ortası = **1.2s** — "yarısı bu kadar hızlı" gerçek tablo.
-- p95 = listenin yukarı uçuna doğru, **8.0s** — "en kötü %5'i ne kadar yavaş?"
+- Mean = (0.4+0.6+…+8.0)/10 = **2.01s** — but 9 of 10 proxies are faster!
+  Lost to the outlier (8.0).
+- Median (p50) = average of the 5th and 6th values = **1.2s** — "half are
+  this fast" — the real picture.
+- p95 ≈ the upper tail, **8.0s** — "how slow is the worst 5%?"
 
-**Ne yapar:** Tarama sonunda **başarılı** sondajların (judge'a ulaşabilenlerin)
-sürelerinden p50 ve p95'i çıkarır. Fail olanlar dışarıda — zaman/dışarıda
-kalmış sayıların ortalaması anlamsız olurdu.
+**What it does:** At the end of the scan the durations of all **successful**
+probes (those that reached the judge) are reduced to p50 and p95. Failures
+are excluded — averaging timeouts is meaningless.
 
-**Kullanım:** Otomatik. Hiçbir bayrak gerekmez.
+**Use:** Automatic. No flag.
 
-**Sonuç:**
+**Result:**
 
 ```
 timing   │ p50 1.2s · p95 4.1s
 ```
 
-**Nasıl okunur:**
-- **p50 ≈ p95** (örn. p50 1.0s · p95 1.4s) → tutarlı, hızlı liste. İdeal.
-- **p95 >> p50** (örn. p50 0.8s · p95 6.2s) → çoğu hızlı ama uzun bir
-  "yavaş kuyruk" var. Üretimde bu kuyruktaki proxy'lerin timeout'a takılma
-  ihtimali yüksek.
-- **p95 ≈ timeout** (örn. `-T 5` iken p95 4.7s) → liste zar zor sığıyor;
-  `-T` değerini artırırsan büyük olasılıkla daha çok proxy "good" olur.
-- **p50 yüksek** (örn. p50 4.5s) → liste genel olarak yavaş; başka bir
-  kaynak denemeye değer.
+**How to read it:**
+- **p50 ≈ p95** (e.g. p50 1.0s · p95 1.4s) → consistent, fast list. Ideal.
+- **p95 >> p50** (e.g. p50 0.8s · p95 6.2s) → most are fast but a long "slow
+  tail" exists. Those tail proxies are likely to time out in production.
+- **p95 ≈ timeout** (e.g. `-T 5` with p95 4.7s) → the list barely fits;
+  raising `-T` will likely produce more "good" results.
+- **High p50** (e.g. p50 4.5s) → the list is generally slow; try another
+  source.
 
-### Geolokasyon (CF judge ile, ücretsiz)
+### Geolocation (with CF judge, free)
 
-**Neden:** Çoğunlukla sadece belirli ülkelerdeki proxy'ler işe yarar (örn. TR
-banka sitesi için TR proxy, US streaming için US proxy). Geolokasyon
-genellikle MaxMind DB indirmek veya rate-limited API'ler çağırmak demektir —
-ek karmaşıklık.
+**Why:** Often only proxies in specific countries are useful (e.g. a TR
+proxy for a TR banking site, a US proxy for US streaming). Geolocation
+usually means downloading a MaxMind DB or calling rate-limited APIs — extra
+complexity.
 
-**Ne yapar:** Cloudflare her proxy'den gelen isteğin IP'sini çözer ve
-`CF-IPCountry` header'ı ekler. CF-aware judge (`proxyjudge.php`) bu header'ı
-yakalayıp `PROXY_COUNTRY` alanı olarak yansıtır. Proxyprof bunu otomatik
-çıkartır. Ek API çağrısı, ek bağımlılık, ek dosya yok.
+**What it does:** Cloudflare resolves the IP of every incoming request and
+adds the `CF-IPCountry` header. A CF-aware judge (`proxyjudge.php`) catches
+that header and re-emits it as `PROXY_COUNTRY`. Proxyprof picks it up
+automatically. No extra API call, dependency, or file.
 
-**Kullanım:** Sadece CF-protected domain'inizde host ettiğiniz judge'u
-gösterin:
+**Use:** Just point to a judge hosted on your CF-protected domain:
 
 ```bash
 proxyprof http -f raw.lst -j https://yours.tld/proxyjudge.php
 ```
 
-**Sonuç:**
-- Özet kutuda en kalabalık 5 ülke + diğerlerinin toplamı:
+**Result:**
+- Top 5 countries + the rest in the summary box:
   ```
   country  │ TR=42 US=28 DE=21 RU=18 BR=14  +74 more
   ```
-- Verbose log'da her satıra ülke kodu düşer: `[ ok ]  L1  1.2.3.4:8080  1.2s  out=1.2.3.4  TR tun`
+- The verbose log puts the country on each row: `[ ok ]  L1  1.2.3.4:8080  1.2s  out=1.2.3.4  TR tun`
 
-**Önemli:** Public azenv judge'larında country bilgisi yok — sadece CF-aware
-judge ile çalışır.
+**Important:** Public azenv judges do not return country info — only a
+CF-aware judge does.
 
-### Hepsini birlikte
+### Everything together
 
 ```bash
-# proxine'den taze HTTP proxy → kendi CF judge'una karşı test → sadece elite +
-# CONNECT-yetkili + 3 rastgele CF gatekeeper'a geçen proxy'leri al.
-# (PROXYPROF_JUDGE_DOMAIN bir kere export edilmişse --judge-domain gereksiz.)
+# Fresh HTTP proxies from proxine → tested against your CF judge → keep
+# only elite + CONNECT-capable + ones that pass 3 random CF gatekeepers.
+# (Once PROXYPROF_JUDGE_DOMAIN is exported, --judge-domain is optional.)
 proxine http -s | proxyprof http \
   -j https://yours.tld/proxyjudge.php \
   --judge-domain yours.tld \
@@ -469,81 +502,83 @@ proxine http -s | proxyprof http \
   -o production-ready.lst
 ```
 
-Bu komut production'a koymadan önce her açıdan elenmiş bir proxy listesi
-verir: elite anonimlik (default `-l 1`) + HTTPS tüneli (default `--tunnel-test`)
-+ 3 farklı CF gatekeeper'a erişim + ülke dağılımı raporu.
+You get a list that has been filtered by every angle before production:
+elite anonymity (default `-l 1`) + HTTPS tunnel (default `--tunnel-test`)
++ access to 3 different CF gatekeepers + country distribution report.
 
 ------------------------------------------------------------
 
-## Reputation & probation (düzenli tarama)
+## Reputation & probation (recurring scans)
 
-Cron benzeri düzenli (saatlik/günlük) çalıştırmalarda input listesi tipik
-olarak **100k+ proxy** içerir, **%80–90'ı önceki çalıştırmalardan tanıdıktır**,
-ve büyük çoğunluğu **sürekli fail verir** (kaynak agregatörler aynı bayat
-listeyi günlerce sunar). Stateless modda her run baştan herkesi test eder —
-zamanın çoğu zaten ölü olduğunu bildiğin proxy'lere harcanır.
+Recurring (hourly/daily) cron runs typically work on an input list of
+**100k+ proxies**, **80–90% of which are familiar from previous runs**, and
+**most of which keep failing** (the source aggregators serve the same stale
+list for days). In stateless mode every run tests everyone from scratch —
+most of the time is spent on proxies you already know are dead.
 
-Reputation katmanı bu israfı çözer. SQLite tabanlı bir state DB (`--reputation
-PATH`, default `~/.config/proxyprof/state.db`) her proxy'nin geçmişini tutar
-ve her tarama başında listeyi dört **bucket**'a ayırır:
+The reputation layer fixes this waste. A SQLite-based state DB
+(`--reputation PATH`, default `~/.config/proxyprof/state.db`) tracks each
+proxy's history and at the start of every scan splits the list into four
+**buckets**:
 
-| Bucket | Tanım | Davranış |
+| Bucket | Definition | Behavior |
 |---|---|---|
-| **HOT**  | Son 24 saatte başarılı | Önce dispatch edilir, normal `--timeout`. |
-| **WARM** | Geçmişte başarılı ama 24sa+ önce | İkinci sırada dispatch. |
-| **NEW**  | DB'de hiç görülmemiş | Üçüncü sırada. |
-| **COLD** | `--dead-threshold` (default 3) kez üst üste fail | En son, kısa `--cold-timeout` ve **üstel probation** ile. |
+| **HOT**  | Succeeded in the last 24 hours | Dispatched first, normal `--timeout`. |
+| **WARM** | Succeeded in the past but >24h ago | Dispatched second. |
+| **NEW**  | Never seen in the DB | Dispatched third. |
+| **COLD** | `--dead-threshold` (default 3) consecutive failures | Last, with a short `--cold-timeout` and **exponential probation**. |
 
-### Ağırlıklı paralel dispatch
+### Weighted parallel dispatch
 
-Bucket'lar **sıralı değil ağırlıklı paralel** taranır. Tek bir
-`asyncio.Semaphore(--concurrency)` altında, dispatch sıralaması
-`HOT*8 → WARM*4 → NEW*2 → COLD*1 → HOT*8 → …` döngüsüyle interleave edilir.
-Sonuç: HOT proxy'ler ilk dalganın çoğunluğunu kapar (yani output erken akar),
-ama COLD'lar da paralel ilerler — tek bir bucket diğerlerini bloklamaz.
+Buckets are dispatched **weighted-parallel**, not sequential. Under a
+single `asyncio.Semaphore(--concurrency)`, dispatch order interleaves as
+`HOT*8 → WARM*4 → NEW*2 → COLD*1 → HOT*8 → …`. Result: HOT proxies dominate
+the first wave (output streams early), but COLDs still progress in
+parallel — no bucket blocks another.
 
-### Üstel probation (asıl tasarruf)
+### Exponential probation (the real saving)
 
-COLD bucket'taki bir proxy **her run'da değil**, üstel olarak seyrelen bir
-takvimle test edilir:
+A proxy in the COLD bucket is **not** tested every run; an exponentially
+sparse schedule is applied:
 
-| consecutive_failures | Test sıklığı |
+| consecutive_failures | Test frequency |
 |---|---|
-| 3 (=dead_threshold) | 2 run'da bir |
-| 4                   | 4 run'da bir |
-| 5                   | 8 run'da bir |
-| 6                   | 16 run'da bir |
-| 7                   | 32 run'da bir |
-| 8+                  | **64 run'da bir** (tavan, `--probation-max-skip`) |
+| 3 (=dead_threshold) | every 2 runs |
+| 4                   | every 4 runs |
+| 5                   | every 8 runs |
+| 6                   | every 16 runs |
+| 7                   | every 32 runs |
+| 8+                  | **every 64 runs** (cap, `--probation-max-skip`) |
 
-Tavan, ölü proxy'nin tamamen unutulmasını engeller — bir gün geri gelirse
-yakalanır. Ama günlük cron'da bir proxy 8 kere üst üste fail vermişse,
-ortalama her **iki ayda bir** test edilir; %90'lık ölü kuyruk efektif olarak
-iş yükünden çıkar.
+The cap prevents a dead proxy from being forgotten forever — if it comes
+back one day, it's caught. But for a proxy in a daily cron that has failed
+8 times in a row, the average test rate is **once every two months**; the
+90% dead tail is effectively removed from the workload.
 
-Sadece **judge'a hiç ulaşamayan** (`status=fail`) sonuçlar bu sayacı artırır;
-`status=filter` (judge geçti ama tunnel/access süzgecinden düştü) proxy'nin
-canlı olduğunu gösterir — fail sayılmaz.
+Only results that **never reached the judge** (`status=fail`) increment the
+failure counter; `status=filter` (judge passed but tunnel/access filtered)
+proves the proxy is alive — it does not count as a failure.
 
-### Tipik tasarruf
+### Typical savings
 
-Diyelim 100k proxy'lik input'unuz var ve günlük cron çalıştırıyorsunuz:
+Say you have a 100k-proxy input and run a daily cron:
 
-| Run | Stateless | Reputation+probation | Açıklama |
+| Run | Stateless | Reputation+probation | Description |
 |---|---|---|---|
-| #1 (boş DB) | 100k test | 100k test | Hepsi NEW; aynı iş. |
-| #5 | 100k test | ~30k test | 70k ölü kuyruk farklı probation kademelerinde. |
-| #30 | 100k test | ~12k test | Eski ölüler 32–64 run'da bir test ediliyor. |
-| Steady state | 100k test | **~10–15k test** | HOT/WARM + yeni gelen NEW + COLD'un seyrek örnekleri. |
+| #1 (empty DB) | 100k probes | 100k probes | All NEW; same workload. |
+| #5 | 100k probes | ~30k probes | 70k of the dead tail is at various probation levels. |
+| #30 | 100k probes | ~12k probes | Old corpses tested every 32–64 runs. |
+| Steady state | 100k probes | **~10–15k probes** | HOT/WARM + incoming NEW + sparse COLD samples. |
 
-### Canlı tabloda BUCKET sütunu
+### BUCKET column in the live table
 
-Her satırın `BKT` sütunu proxy'nin bu run'daki bucket'ını gösterir: `H` (hot),
-`W` (warm), `N` (new), `C` (cold), `—` (stateless mod).
+Each row's `BKT` column shows the proxy's bucket for this run: `H` (hot),
+`W` (warm), `N` (new), `C` (cold), `—` (stateless mode).
 
-### CONFIG kutusunda dağılım
+### Distribution in the CONFIG box
 
-Tarama başında bucket dağılımı + atlanan probation sayısı raporlanır:
+The bucket distribution + count of probation skips is reported at the start
+of the scan:
 
 ```
 │ reputation   │ on  (run #42, db=/home/u/.config/proxyprof/state.db) │
@@ -552,24 +587,24 @@ Tarama başında bucket dağılımı + atlanan probation sayısı raporlanır:
 │ cold-timeout │ 2.0s                                                 │
 ```
 
-### Tamamen kapatmak
+### Disabling completely
 
-Eski stateless davranışı geri getirmek için:
+To restore the old stateless behavior:
 
 ```bash
 proxyprof http -f raw.lst --no-reputation
 ```
 
-State dosyası okunmaz/yazılmaz; tüm proxy'ler eşit önceliklendirilmemiş
-şekilde, tek `--timeout` ile taranır.
+The state file is neither read nor written; all proxies are probed equally
+under a single `--timeout`.
 
-### Bakım
+### Maintenance
 
-State şeması basit (tek `proxy` tablosu + `meta`). Dosya tamamen
-self-contained — kopyalayıp taşıyabilirsiniz. SQLite WAL modu açık
-olduğundan paralel proxyprof süreçleri aynı DB'ye güvenle yazar.
+The state schema is simple (one `proxy` table + `meta`). The file is fully
+self-contained — copy/move at will. SQLite WAL mode is enabled, so parallel
+proxyprof processes can write to the same DB safely.
 
-Manuel inceleme:
+Manual inspection:
 
 ```bash
 sqlite3 ~/.config/proxyprof/state.db \
@@ -580,87 +615,87 @@ sqlite3 ~/.config/proxyprof/state.db \
    LIMIT 20;"
 ```
 
-DB'yi resetlemek için: dosyayı sil. Bir sonraki çalıştırmada otomatik yeniden
-oluşturulur ve hepsi NEW'den başlar.
+To reset the DB: delete the file. The next run recreates it and everyone
+starts as NEW.
 
 ------------------------------------------------------------
 
-## Cloudflare-aware judge (önerilir)
+## Cloudflare-aware judge (recommended)
 
-Public azenv judge'ları zaman zaman ölür ve yavaş yanıt verir. Kendi
-Cloudflare-korumalı domain'iniz varsa repodaki `proxyjudge.php` dosyasını
-herhangi bir yere koyup `-j` ile gösterebilirsiniz:
+Public azenv judges occasionally die or respond slowly. If you have a
+Cloudflare-protected domain, drop the repo's `proxyjudge.php` somewhere and
+point `-j` at it:
 
 ```bash
-# Yerel test
+# Local sanity check
 curl https://yours.tld/proxyjudge.php
 
-# proxyprof ile
+# With proxyprof
 proxyprof http -j https://yours.tld/proxyjudge.php -f raw.lst
 ```
 
-Bu judge:
-- `CF-Connecting-IP`'yi `REMOTE_ADDR` olarak normalize eder → anonimlik
-  tespiti gerçek istemci (proxy çıkış) IP'sine karşı çalışır.
-- `CF-IPCountry`'yi `PROXY_COUNTRY` field'ı olarak expose eder → proxyprof
-  otomatik çekip özet kutusuna country dağılımı ekler. **Ekstra GeoIP DB
-  veya API çağrısı yok.**
-- Tüm `CF-*` header'larını çıktıdan strip eder → anonimlik tespitini
-  saptırmaz, judge'ın CF arkasında olduğu belli olmaz.
+This judge:
+- Normalizes `CF-Connecting-IP` to `REMOTE_ADDR` → anonymity detection runs
+  against the **real** client (proxy exit) IP.
+- Exposes `CF-IPCountry` as the `PROXY_COUNTRY` field → proxyprof picks it
+  up automatically and adds the country breakdown to the summary box. **No
+  extra GeoIP DB or API call.**
+- Strips all `CF-*` headers from the dump → doesn't bias anonymity
+  detection and doesn't reveal that the judge is behind CF.
 
-> **Önemli:** Domain Cloudflare'de **"Proxied"** (turuncu bulut) modda olmalı.
-> "DNS only" (gri bulut) modunda CF header'ları gelmez, judge sıradan bir
-> azenv gibi çalışır (country bilgisi yok).
+> **Important:** The domain must be in Cloudflare **"Proxied"** (orange
+> cloud) mode. In "DNS only" (gray cloud) mode the CF headers are not
+> added and the judge behaves like a vanilla azenv (no country info).
 
-### Ziyaret log'u (opt-in)
+### Visit log (opt-in)
 
-Judge gelen her isteği JSONL formatında yan tarafa kaydedebilir. Default olarak
-**kapalı**. Açmak için `proxyjudge.php`'nin tepesindeki tek satırı düzenle:
+The judge can write each incoming request to a sidecar JSONL log. **Off**
+by default. To enable, edit the single line at the top of `proxyjudge.php`:
 
 ```php
-// Boş = log yok. Path verirsen log açılır.
+// Empty = no log. Set a path to enable.
 $LOG_FILE = '/var/log/proxyjudge.log';
 ```
 
-> ⚠️ **Güvenlik:** Log dosyasını **web root içine koyma**. Path'i ya tamamen
-> dışarı (örn. `/var/log/...`) yaz, ya da web root içinde tutuyorsan
-> `.htaccess`/nginx kuralıyla HTTP erişimini engelle. Aksi takdirde judge'ını
-> ziyaret eden tüm proxy'lerin listesi internete açık olur.
+> ⚠️ **Security:** Do **not** put the log file inside the web root. Use a
+> path entirely outside (e.g. `/var/log/...`), or if you keep it inside,
+> block HTTP access with `.htaccess` / nginx rules. Otherwise the list of
+> every proxy that visited your judge is publicly downloadable.
 
-Her satır şu alanları içerir:
+Each line has these fields:
 
-| Alan | Kaynak | Açıklama |
+| Field | Source | Description |
 |---|---|---|
 | `ts` | Server | ISO-8601 UTC timestamp |
-| `seen_ip` | CF-Connecting-IP | Proxy'nin gerçek çıkış IP'si (güvenilir — CF set eder) |
-| `seen_port` | TCP peer | Proxy'nin O istek için kullandığı **ephemeral** kaynak port (dinleme portu DEĞİL) |
-| `country` | CF-IPCountry | ISO ülke kodu (`TR`, `US`, …) |
-| `client_type` | `X-Proxyprof-Proxy` header | Proxy tipi (`http` / `https` / `socks4` / `socks5`) — **spoof edilebilir** |
-| `client_ip` | `X-Proxyprof-Proxy` header | Proxy'nin **dinleme** IP'si — `seen_ip` ile cross-reference yapılabilir |
-| `client_port` | `X-Proxyprof-Proxy` header | Proxy'nin **dinleme** portu (örn. `1080`, `8080`) |
-| `ua` | User-Agent | 200 karakterle kısaltılmış |
-| `cf_ray` | CF-Ray | CF edge trace ID — sorun ayıklama için |
+| `seen_ip` | CF-Connecting-IP | Proxy's real exit IP (trusted — set by CF) |
+| `seen_port` | TCP peer | The **ephemeral** source port the proxy used for that request (NOT the listen port) |
+| `country` | CF-IPCountry | ISO country code (`TR`, `US`, …) |
+| `client_type` | `X-Proxyprof-Proxy` header | Proxy type (`http` / `https` / `socks4` / `socks5`) — **spoofable** |
+| `client_ip` | `X-Proxyprof-Proxy` header | Proxy's **listen** IP — cross-reference against `seen_ip` |
+| `client_port` | `X-Proxyprof-Proxy` header | Proxy's **listen** port (e.g. `1080`, `8080`) |
+| `ua` | User-Agent | Truncated to 200 chars |
+| `cf_ray` | CF-Ray | CF edge trace ID — for debugging |
 
-Tipik bir satır:
+A typical line:
 
 ```json
 {"ts":"2026-05-24T13:47:21+00:00","seen_ip":"45.83.122.10","seen_port":54231,"country":"TR","client_type":"socks5","client_ip":"45.83.122.10","client_port":1080,"ua":"Mozilla/5.0 ...","cf_ray":"8a1b2c3d4e5f6789-IST"}
 ```
 
-**Neden iki ayrı IP alanı?** `seen_ip` Cloudflare'in TCP peer olarak gördüğü
-adres — proxy bunu sahteleyemez. `client_ip` ise proxyprof'un header'a yazdığı
-değer — herkes bu header'ı uydurabilir. İkisinin **farklı** olması ya proxy
-chain'i (proxyprof → proxy A → proxy B → judge) ya da fake-header trafiği
-demek. **Aynı** olması = direkt bağlantı, güvenilir kayıt.
+**Why two IP fields?** `seen_ip` is the TCP peer address Cloudflare sees —
+the proxy cannot forge it. `client_ip` is the value proxyprof writes into a
+header — anyone can fabricate it. **Different** values mean either a proxy
+chain (proxyprof → proxy A → proxy B → judge) or fake-header traffic.
+**Same** values mean a direct connection — a trustworthy record.
 
-#### proxyprof tarafı — kimlik gönderimi hardcoded domain whitelist
+#### proxyprof side — identity gated by hardcoded domain whitelist
 
-`X-Proxyprof-Proxy: <type>://<ip>:<port>` header'ı **yalnızca** kodda
-sabitlenmiş güvenilir domain'lerdeki judge'lara gönderilir. CLI bayrağı veya
-env var yok — yanlış kullanım fiziksel olarak imkânsız.
+The `X-Proxyprof-Proxy: <type>://<ip>:<port>` header is sent **only** to
+judges on domains hardcoded in the source as trusted. There is no CLI flag
+or env var — misuse is physically impossible.
 
-Güvenilir domain listesi `proxyprof.py` içinde `_TRUSTED_JUDGE_DOMAINS`
-sabitidir:
+The trusted-domain list is the `_TRUSTED_JUDGE_DOMAINS` constant in
+`proxyprof.py`:
 
 ```python
 _TRUSTED_JUDGE_DOMAINS: tuple[str, ...] = (
@@ -668,170 +703,174 @@ _TRUSTED_JUDGE_DOMAINS: tuple[str, ...] = (
 )
 ```
 
-Repoyu kendi judge'unuz için fork ederseniz tek satırlık değişiklik:
+If you fork this repo for your own judge, one line changes:
 
 ```python
 _TRUSTED_JUDGE_DOMAINS = ("mydomain.net", "altdomain.com")
 ```
 
-**Match kuralı:**
+**Match rule:**
 
-- `tankado.com` → `tankado.com` ve `*.tankado.com` (her subdomain) **trusted**
-- `eviltankado.com` ya da `tankado.com.evil.tld` gibi yakın isimler **DEĞİL**
-- Port önemsizdir: `tankado.com:8443` de eşleşir
+- `tankado.com` → matches `tankado.com` and `*.tankado.com` (any subdomain) **trusted**
+- `eviltankado.com` or `tankado.com.evil.tld` and other look-alikes are **not**
+- Port is irrelevant: `tankado.com:8443` matches
 
-**Davranış matrisi (sabit `tankado.com` ile):**
+**Behavior matrix (with `tankado.com` as the constant):**
 
-| judge URL | Header gönderilir mi? |
+| judge URL | Header sent? |
 |---|---|
 | `https://tankado.com/proxyjudge.php` | ✅ |
 | `https://judge.tankado.com/anything` | ✅ (subdomain) |
-| `https://tankado.com:8443/p.php` | ✅ (port önemsiz) |
-| `https://eviltankado.com/x` | ❌ (yakın isim, farklı domain) |
+| `https://tankado.com:8443/p.php` | ✅ (port irrelevant) |
+| `https://eviltankado.com/x` | ❌ (look-alike, different domain) |
 | `http://httpheader.net/azenv.php` | ❌ (public judge) |
-| `http://proxyjudge.biz/` | ❌ (alakasız) |
+| `http://proxyjudge.biz/` | ❌ (unrelated) |
 
-Tarama sonu CONFIG kutusunda `identity = on/off` olarak görünür. Public
-azenv'lara, otomatik seçilen judge'lara veya yanlış yere belirttiğin custom
-judge'a kimlik header'ı sızmaz. Path/script adına bakılmaz — başkasının kendi
-domain'ine `proxyjudge.php` deploy etmesi sizin kimliğinizin oraya gitmesini
-sağlamaz; tek belirleyici **domain sahipliği**dir.
+No path or script name is checked — someone else deploying `proxyjudge.php`
+on their domain cannot harvest your identity; the only determinant is
+**domain ownership**. Public azenv judges, the auto-selected judge, or a
+custom judge pointed somewhere wrong will never receive the identity
+header.
 
-#### Log'u okuma
+#### Reading the log
 
 ```bash
-# Son 10 girişi göster
+# Show the last 10 entries
 tail -n 10 /var/log/proxyjudge.log
 
-# Sadece SOCKS5 ziyaretçilerinin IP'lerini çıkar
+# Only the IPs of SOCKS5 visitors
 jq -r 'select(.client_type=="socks5") | .seen_ip' < /var/log/proxyjudge.log
 
-# Ülke dağılımı
+# Country distribution
 jq -r '.country' < /var/log/proxyjudge.log | sort | uniq -c | sort -rn | head
 
-# seen_ip ile client_ip'in farklı olduğu (chain veya spoof) girişler
+# Entries where seen_ip and client_ip differ (chain or spoof)
 jq 'select(.client_ip != null and .seen_ip != .client_ip)' < /var/log/proxyjudge.log
 ```
 
 ------------------------------------------------------------
 
-## Yerelleştirme (Localization)
+## Localization
 
-proxyprof'un tüm kullanıcıya yönelik metinleri (yardım ekranı, runtime
-mesajları, tablo başlıkları, CONFIG/RESULT kutuları, progress satırı) çok
-dilli destek altyapısına sahiptir. Çeviriler `i18n/` dizininde tek-dosyalık
-JSON olarak tutulur.
+All user-facing text in proxyprof (help screen, runtime messages, table
+headers, CONFIG/RESULT boxes, the progress line) goes through a multi-
+language infrastructure. Translations live as single JSON files under
+`i18n/`.
 
-### Dil seçimi (öncelik sırası)
+### Language selection (priority order)
 
-1. `-L tr` / `--lang tr` CLI bayrağı
-2. `PROXYPROF_LANG=tr` ortam değişkeni
-3. Sistem locale'i (`LC_ALL`, `LC_MESSAGES`, `LANG`)
-4. İngilizce (her zaman mevcut fallback)
+1. `-L tr` / `--lang tr` CLI flag
+2. `PROXYPROF_LANG=tr` environment variable
+3. System locale (`LC_ALL`, `LC_MESSAGES`, `LANG`)
+4. English (always-available fallback)
 
-Desteklenmeyen bir dil istenirse otomatik olarak İngilizce'ye düşülür — uyarı
-mesajı verilmez.
+If an unsupported language is requested, English is silently used — no
+warning.
 
 ```bash
-# Türkçe arayüz
+# Turkish UI
 proxyprof http -L tr -f raw.lst
 
-# Sistem locale Türkçe ise otomatik (env değişkeni gerekmez)
+# System locale is Turkish — automatic, no env var needed
 LANG=tr_TR.UTF-8 proxyprof http -f raw.lst
 
-# Tek seferlik İngilizce'ye geçiş
+# One-off switch to English
 proxyprof http -L en -f raw.lst
 ```
 
-Aktif dil tarama sonu **CONFIG** kutusunda `dil` satırında görünür.
+The active language appears in the **CONFIG** box at the end of the scan
+under the `lang` row.
 
-### Mevcut diller
+### Available languages
 
-| Kod | Dil | Çeviren |
+| Code | Language | Translator |
 |---|---|---|
 | `en` | English | proxyprof core team |
 | `tr` | Türkçe | Özgür Koca |
 
-### Yeni dil ekleme (contributor için)
+### Adding a new language (for contributors)
 
-Çeviriler basit JSON'dur. Üç adımda PR atabilirsiniz:
+Translations are plain JSON. Three steps to a PR:
 
 ```bash
-# 1) Canonical İngilizce dosyayı kopyala
+# 1) Copy the canonical English file
 cp i18n/en.json i18n/de.json
 
-# 2) JSON içindeki "key": "value" çiftlerinin DEĞER'ini hedef dile çevir.
-#    Anahtarlar (sol taraf) ve {placeholder}'lar AYNEN korunmalı.
+# 2) Translate the VALUES of each "key": "value" pair into the target
+#    language. Keys (left side) and {placeholders} MUST be preserved.
 $EDITOR i18n/de.json
 
-# 3) Test et
+# 3) Test
 ./proxyprof.py -L de --help
 ./proxyprof.py -L de http -f /tmp/sample.lst --no-reputation
 ```
 
-**Çeviri ipuçları:**
+**Translation tips:**
 
-- Eksik bir anahtar runtime'da otomatik olarak İngilizce'ye fallback olur.
-  Yani çeviriye yavaş yavaş başlayıp kademeli PR atılabilir.
-- `{placeholder}`'lı dizgelerde placeholder isimleri kelimesi kelimesine
-  korunmalı (örn. `{pkgs}`, `{n}`, `{elapsed:.1f}s`).
-- `meta.lang_name` alanı dili kendi alfabesinde yazın (örn. `"meta.lang_name": "Deutsch"`).
-- `meta.translator_credit` alanına kendi adınızı yazabilirsiniz — README'deki
-  "Mevcut diller" tablosuna eklenir.
-- Çok kısa kelimeler (örn. tablo başlıkları "TUN", "ACC") karakter sayısı
-  hassas — sütun genişliği otomatik ayarlanır ama makul tutmaya çalışın.
+- A missing key falls back to English at runtime, so you can translate
+  gradually and PR incrementally.
+- In `{placeholder}` strings keep placeholder names character-for-character
+  (e.g. `{pkgs}`, `{n}`, `{elapsed:.1f}s`).
+- Write `meta.lang_name` in the language's own script (e.g.
+  `"meta.lang_name": "Deutsch"`).
+- Put your name in `meta.translator_credit` — it appears in this README's
+  "Available languages" table.
+- Very short words (e.g. table headers "TUN", "ACC") are width-sensitive —
+  column widths auto-adjust but keep them reasonable.
 
-PR açtıktan sonra mevcut dil setine eklenir.
+Once your PR is merged the language joins the active set.
 
 ------------------------------------------------------------
 
-## Mimari
+## Architecture
 
 ```
 proxy-profiler/
-├── proxyprof.py    # Async scanner + CLI (tek dosya, ~1000 satır)
-├── judges.py       # Judge listesi + response parser + seviye + distorting + country
-├── reputation.py   # SQLite-tabanlı proxy reputation store + bucket sınıflandırma + probation
-├── i18n.py         # Çok dilli mesaj destek modülü (stdlib-only)
+├── proxyprof.py    # Async scanner + CLI (single file, ~1000 lines)
+├── judges.py       # Judge list + response parser + level + distorting + country
+├── reputation.py   # SQLite-backed proxy reputation store + bucket classification + probation
+├── i18n.py         # Multi-language message module (stdlib-only)
 ├── i18n/
-│   ├── en.json     # Canonical English (referans)
-│   └── tr.json     # Türkçe
-├── proxyjudge.php  # Opsiyonel CF-aware judge — kendi domain'inde host et
-├── pyproject.toml  # aiohttp + aiohttp-socks bağımlılıkları
+│   ├── en.json     # Canonical English (reference)
+│   └── tr.json     # Turkish
+├── proxyjudge.php  # Optional CF-aware judge — host on your own domain
+├── pyproject.toml  # aiohttp + aiohttp-socks dependencies
 └── README.md
 ```
 
-- **`judges.py`** judge URL listesi, judge yanıtının iki olası formatını
-  (`<pre>KEY=VALUE</pre>` ve düz JSON) ayrıştırır, public IP + header
-  sözlüğünden seviye çıkarır.
-- **`reputation.py`** tek dosyalık SQLite şeması, bucket sınıflandırma
-  (HOT/WARM/NEW/COLD), üstel probation kararı ve ağırlıklı interleave dispatch
-  yardımcılarını sağlar. WAL modu açık → paralel proxyprof süreçleri güvenli.
-- **`proxyprof.py`** her proxy için tek bir `aiohttp_socks.ProxyConnector`
-  açar, `asyncio.Semaphore(N)` ile eşzamanlılığı sınırlar; reputation açıkken
-  task'lar bucket önceliğine göre interleave edilir; sonuçlar tek bir
-  `gather` ile toplanır ve sonunda DB'ye batch upsert ile yazılır.
+- **`judges.py`** holds the judge URL list, parses both possible judge
+  response formats (`<pre>KEY=VALUE</pre>` and plain JSON), and derives the
+  anonymity level from the public IP + header dictionary.
+- **`reputation.py`** provides the single-file SQLite schema, the bucket
+  classifier (HOT/WARM/NEW/COLD), the exponential probation decision, and
+  the weighted interleave dispatch helpers. WAL mode is on → parallel
+  proxyprof processes are safe.
+- **`proxyprof.py`** opens one `aiohttp_socks.ProxyConnector` per proxy,
+  caps concurrency with `asyncio.Semaphore(N)`; when reputation is on,
+  tasks are interleaved by bucket priority; results are gathered with a
+  single `gather` and batch-upserted to the DB at the end.
 
 ------------------------------------------------------------
 
-## İlgili araçlar
+## Related tools
 
-- **[Proxine](https://github.com/enseitankado/proxine)** — 60+ açık kaynaktan
-  ham proxy listesi toplayan aggregator. Proxyprof'un asıl girdi kaynağı.
+- **[Proxine](https://github.com/enseitankado/proxine)** — Aggregator that
+  collects raw proxy lists from 60+ open sources. Proxyprof's primary input
+  source.
 - **[EliteProxySwitcher](https://www.eliteproxyswitcher.com/)** — Windows GUI.
 - **[Open Proxy Checker](https://openproxy.space/software/proxy-checker/)** —
-  Windows liste doğrulayıcı.
+  Windows list validator.
 
 ------------------------------------------------------------
 
-## Lisans
+## License
 
-MIT. Türev çalışmalarda orijinal yazar (Özgür Koca) atıfını koruyun. Yazılım
-"olduğu gibi" sunulur; kullanım riski tamamen kullanıcıya aittir.
+MIT. Preserve the original author's attribution (Özgür Koca) in derivative
+works. The software is provided "as is"; use is entirely at the user's risk.
 
-## Yazar
+## Author
 
-**Özgür Koca** — meslek lisesinde
-[öğretmenlik](https://samsuneml.meb.k12.tr/) yapıyor.
+**Özgür Koca** — teaches at a [vocational high
+school](https://samsuneml.meb.k12.tr/).
 GitHub: [enseitankado](https://github.com/enseitankado) · Blog:
 [tankado.com](https://www.tankado.com)
