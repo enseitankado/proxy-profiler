@@ -26,6 +26,7 @@
   "bootstrap.loading_reputation": "Reputation durumu yükleniyor ({n:,} proxy)...",
   "bootstrap.preparing": "Gerçek IP ve judge tespit ediliyor (birkaç saniye sürebilir)...",
   "bootstrap.reseeded": "{path} dosyasından {n:,} proxy input'a eklendi (toplam {total:,} satırdan, dedup sonrası) — retest için.",
+  "bootstrap.dropped_local_ips": "{n:,} yerel ağ IP'si (RFC1918 / loopback / link-local) input'tan elendi. Korumak için: --keep-local-ips",
   "bootstrap.top_n_applied": "--top-n {max:,} aktif: {total:,} proxy içinden HOT/WARM/NEW önceliğiyle ilk {n:,} seçildi (COLD bucket atlandı).",
   "bootstrap.verifying_access": "{n} access gatekeeper proxy'siz test ediliyor (oturum-içi canlılık kontrolü)...",
   "bootstrap.access_pruned": "{n}/{total} gatekeeper ölü, bu oturumda kullanılmayacak: {dead}",
@@ -87,6 +88,7 @@
 
   "cli.help.protocol": "Listedeki tüm proxy'lerin protokolü.",
   "cli.help.file": "Proxy listesi dosyası. '-' = stdin (varsayılan: stdin).",
+  "cli.help.keep_local_ips": "Yerel ağ IP'lerini (RFC1918, loopback, link-local, multicast) input'tan ELEME. Default: yerel adresler atılır — public proxy listesinde 192.168.x.y görmek tipik kullanıcı hatasıdır.",
   "cli.help.concurrency": "Eşzamanlı sonda sayısı (varsayılan: {default}).",
   "cli.help.timeout": "Proxy başına timeout, saniye (varsayılan: {default}).",
   "cli.help.retries": "Başarısızlık sonrası tekrar deneme (varsayılan: {default}).",

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import json
 import os
 import random
@@ -519,6 +520,39 @@ def parse_proxies(text: str) -> list[str]:
         seen.add(key)
         out.append(key)
     return out
+
+
+def _is_local_ip(ip_str: str) -> bool:
+    """Routable unicast olmayan IPv4 mü? RFC1918 + loopback + link-local +
+    carrier NAT + reserved (is_global=False) + multicast hepsi atılır. Python
+    stdlib'inde `is_global` multicast'i global sayar (multicast = routable,
+    sadece unicast değil); proxy bağlamında çağırılamaz → multicast'i de
+    explicit ele. Geçersiz IP string'i için False döner (caller filtrelemeden
+    geçirir; parse aşaması zaten geçersizleri eler)."""
+    try:
+        addr = ipaddress.IPv4Address(ip_str)
+    except (ValueError, ipaddress.AddressValueError):
+        return False
+    return (not addr.is_global) or addr.is_multicast
+
+
+def filter_local_ips(proxies: list[str]) -> tuple[list[str], int]:
+    """Yerel ağ IP'lerini ele; (kalan, atılan_sayı) döner.
+
+    Default davranış: `--keep-local-ips` verilmediyse input listesindeki
+    RFC1918 / loopback / link-local / multicast adresleri at — bir public
+    proxy listesinde 192.168.x.y görmek kullanıcı hatasıdır (yanlış kopyala,
+    private subnet sızıntısı) ve proxy üzerinden zaten internet'e çıkamaz.
+    """
+    kept: list[str] = []
+    dropped = 0
+    for p in proxies:
+        ip = p.partition(":")[0]
+        if _is_local_ip(ip):
+            dropped += 1
+        else:
+            kept.append(p)
+    return kept, dropped
 
 
 def read_proxies(file_arg: str | None) -> list[str]:
@@ -3110,6 +3144,18 @@ async def amain(args: argparse.Namespace) -> int:
     _status(t("bootstrap.reading"), args.silent)
     proxies = read_proxies(args.file)
 
+    # Yerel ağ IP filtresi: default'ta RFC1918 / loopback / link-local /
+    # multicast adresleri input'tan eler. `--keep-local-ips` ile bypass —
+    # internal lab scan'lerinde yerel proxy'leri test etmek isteyen kullanıcı
+    # için. Public proxy listelerinde tipik: yanlış kopyalanmış output,
+    # private subnet sızıntısı, ya da bozuk parse.
+    if not getattr(args, "keep_local_ips", False):
+        proxies, dropped_local = filter_local_ips(proxies)
+        if dropped_local > 0:
+            _status(t("bootstrap.dropped_local_ips", n=dropped_local), args.silent)
+        if not proxies:
+            sys.exit(f"{_paint('proxyprof:', _C_DIM)} {t('input.no_valid_pairs')}")
+
     # Protokol-port uyumsuzluğu sezgisi: `-p socks5` + input'ta port 4145
     # (SOCKS4 konvansiyon portu) yoğunsa kullanıcıyı uyar. Bu proxy'ler
     # büyük olasılıkla SOCKS4 daemon — SOCKS5 olarak test edilirse handshake
@@ -3136,6 +3182,8 @@ async def amain(args: argparse.Namespace) -> int:
                 with out_path.open(encoding="utf-8") as fh:
                     seed_text = fh.read()
                 seed_proxies = parse_proxies(seed_text)
+                if seed_proxies and not getattr(args, "keep_local_ips", False):
+                    seed_proxies, _ = filter_local_ips(seed_proxies)
                 if seed_proxies:
                     # Dedup ile birleştir: input order + sonra seed'in input'ta
                     # olmayanları. dict.fromkeys insertion order'ı korur.
@@ -3955,6 +4003,10 @@ def main(argv: list[str] | None = None) -> int:
     g_scan.add_argument(
         "-f", "--file", metavar="FILE",
         help=t("cli.help.file"),
+    )
+    g_scan.add_argument(
+        "--keep-local-ips", action="store_true", dest="keep_local_ips",
+        help=t("cli.help.keep_local_ips"),
     )
     g_scan.add_argument(
         "-c", "--concurrency", type=int, default=DEFAULT_CONCURRENCY,

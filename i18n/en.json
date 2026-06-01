@@ -26,6 +26,7 @@
   "bootstrap.loading_reputation": "Loading reputation state for {n:,} proxies...",
   "bootstrap.preparing": "Detecting public IP and picking judge (may take a few seconds)...",
   "bootstrap.reseeded": "Added {n:,} proxies to input from {path} (out of {total:,} entries after dedup) — for retest.",
+  "bootstrap.dropped_local_ips": "Dropped {n:,} local-network IPs (RFC1918 / loopback / link-local) from input. To keep them: --keep-local-ips",
   "bootstrap.top_n_applied": "--top-n {max:,} active: of {total:,} input proxies, took the first {n:,} by HOT/WARM/NEW priority (COLD bucket skipped).",
   "bootstrap.verifying_access": "Testing {n} access gatekeepers directly (session-start liveness check)...",
   "bootstrap.access_pruned": "{n}/{total} gatekeepers are dead, not used in this session: {dead}",
@@ -87,6 +88,7 @@
 
   "cli.help.protocol": "Proxy protocol of all entries in the list.",
   "cli.help.file": "Proxy list file. '-' = stdin (default: stdin).",
+  "cli.help.keep_local_ips": "Do NOT filter local-network IPs (RFC1918, loopback, link-local, multicast) from the input. Default: local addresses are dropped — seeing 192.168.x.y in a public proxy list is usually a copy-paste mistake.",
   "cli.help.concurrency": "Concurrent probes (default: {default}).",
   "cli.help.timeout": "Per-proxy timeout, seconds (default: {default}).",
   "cli.help.retries": "Retries per proxy on failure (default: {default}).",
