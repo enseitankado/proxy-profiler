@@ -53,7 +53,7 @@ proxyprof <http|https|socks4|socks5> [options]
 
 ```bash
 # Chain with proxine: collect HTTP proxies, keep only elite ones
-proxine http -s | proxyprof http -l 1 -o elite.lst
+proxine -p http -s | proxyprof http -l 1 -o elite.lst
 
 # Read from file, keep elite + anonymous, write to file
 proxyprof http -f raw.lst -l 2 -o filtered.lst
@@ -80,5 +80,5 @@ proxyprof http -f raw.lst --no-mitm-test
 proxyprof http -f raw.lst -j https://yours.tld/proxyjudge.php
 
 # Fully silent; feed another script
-proxine socks5 -s | proxyprof socks5 -s | head -20
+proxine -p socks5 -s | proxyprof socks5 -s | head -20
 ```

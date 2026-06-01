@@ -96,7 +96,7 @@ country │ TR=42 US=28 DE=21 RU=18 BR=14  +74 more
 ```bash
 # Fresh HTTP proxies from proxine → tested against your CF judge → keep
 # only elite + CONNECT-capable + ones that pass 3 random CF gatekeepers.
-proxine http -s | proxyprof http \
+proxine -p http -s | proxyprof http \
   -j https://yours.tld/proxyjudge.php \
   --access-test \
   -o production-ready.lst

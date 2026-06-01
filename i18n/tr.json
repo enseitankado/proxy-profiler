@@ -40,7 +40,7 @@
 
   "hint.socks5_port_4145": "ipucu: input'taki {n:,} proxy port 4145'te (%{pct:.1f}). Bu port konvansiyonel SOCKS4 daemon portu; muhtemelen SOCKS4 olarak etiketlenmesi gerekiyordu. -p socks5 ile bu proxy'lerde tunnel/MITM geçer ama HTTPS payload transferinde 'err' (ConnectionReset/ServerDisconnected) görürsün. Aynı listeyi `-p socks4` ile tekrar dene; daha fazla 'iyi' çıkması bekleniyor.",
 
-  "input.no_input": "proxy girdisi yok. Stdin üzerinden bir liste boruyla geçirin (örn. `proxine http -s | proxyprof -p http`) veya `-f DOSYA` kullanın.",
+  "input.no_input": "proxy girdisi yok. Stdin üzerinden bir liste boruyla geçirin (örn. `proxine -p http -s | proxyprof -p http`) veya `-f DOSYA` kullanın.",
   "input.cannot_read": "'{file}' okunamıyor: {err}",
   "input.no_valid_pairs": "girdide geçerli IP:PORT çifti yok.",
   "input.access_url_invalid": "--access-test URL '{url}' http:// veya https:// ile başlamalı",

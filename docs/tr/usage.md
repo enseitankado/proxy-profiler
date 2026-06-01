@@ -53,7 +53,7 @@ proxyprof <http|https|socks4|socks5> [seçenekler]
 
 ```bash
 # Proxine ile zincir: HTTP proxy'leri topla, sadece elite olanları çıkar
-proxine http -s | proxyprof http -l 1 -o elite.lst
+proxine -p http -s | proxyprof http -l 1 -o elite.lst
 
 # Dosyadan oku, elite + anonymous tut, dosyaya yaz
 proxyprof http -f raw.lst -l 2 -o filtered.lst
@@ -80,5 +80,5 @@ proxyprof http -f raw.lst --no-mitm-test
 proxyprof http -f raw.lst -j https://yours.tld/proxyjudge.php
 
 # Tamamen sessiz; başka bir script'e besleme
-proxine socks5 -s | proxyprof socks5 -s | head -20
+proxine -p socks5 -s | proxyprof socks5 -s | head -20
 ```

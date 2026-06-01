@@ -6,7 +6,7 @@ An async Python tool that profiles a proxy list for **liveness**, **anonymity le
 
 ```bash
 # proxine collects the list, proxyprof filters — elite proxies ready in seconds
-proxine http -s | proxyprof http -l 1 -o working.lst
+proxine -p http -s | proxyprof http -l 1 -o working.lst
 ```
 
 ------------------------------------------------------------
@@ -49,7 +49,7 @@ In pipelines (no TTY), the prompt is skipped and a static error message is retur
 
 ```bash
 # 1) Get a list (proxine, your own source, or any public list)
-proxine http -s > raw.lst
+proxine -p http -s > raw.lst
 
 # 2) Keep only elite + live ones
 proxyprof http -f raw.lst -l 1 -o working.lst

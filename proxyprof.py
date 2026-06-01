@@ -7,7 +7,7 @@ URL'e yönlendirerek canlı / anonim / elite / transparent sınıflandırması y
 Filtreyi geçen proxy'leri stdout'a sıralı, dedupe edilmiş halde yazar.
 
 Boru hattı örneği:
-    proxine http -s | proxyprof -p http -l 1 -o working.lst
+    proxine -p http -s | proxyprof -p http -l 1 -o working.lst
 """
 
 from __future__ import annotations
@@ -3970,7 +3970,7 @@ def main(argv: list[str] | None = None) -> int:
     # Tek satır + fixed-width padding biçiminin yerine; dar terminal'de taşmaz,
     # göz hızlı tarar.
     _examples = [
-        ("proxine http -s | proxyprof -p http",                                  "cli.example.pipe"),
+        ("proxine -p http -s | proxyprof -p http",                               "cli.example.pipe"),
         ("proxyprof -p http -f list.lst -l 2 -o ok.lst",                         "cli.example.file_in"),
         ("proxyprof -p socks5 -f - -c 1000 -T 8",                                "cli.example.stdin_socks5"),
         ("proxyprof -p http -f l.lst --access-test https://a.com,https://b.com", "cli.example.access_test_custom"),

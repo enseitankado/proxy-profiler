@@ -6,7 +6,7 @@ Bir proxy listesini saniyeler içinde **canlılık**, **anonimlik seviyesi** ve 
 
 ```bash
 # proxine listeyi toplar, proxyprof eler — saniyeler içinde elite proxy'ler hazır
-proxine http -s | proxyprof http -l 1 -o working.lst
+proxine -p http -s | proxyprof http -l 1 -o working.lst
 ```
 
 ------------------------------------------------------------
@@ -49,7 +49,7 @@ Boru hatlarında (TTY değilken) prompt çıkmaz; statik hata mesajıyla çıkar
 
 ```bash
 # 1) Bir liste topla (proxine, kendi kaynağın, ya da public liste)
-proxine http -s > raw.lst
+proxine -p http -s > raw.lst
 
 # 2) Sadece elite + canlı olanları çek
 proxyprof http -f raw.lst -l 1 -o working.lst

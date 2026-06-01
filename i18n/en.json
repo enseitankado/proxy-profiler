@@ -40,7 +40,7 @@
 
   "hint.socks5_port_4145": "hint: {n:,} proxies ({pct:.1f}%) in input are on port 4145, the conventional SOCKS4 daemon port. They are likely SOCKS4, mislabeled as socks5. With -p socks5 you'll see tunnel/MITM pass but 'err' (ConnectionReset/ServerDisconnected) during HTTPS payload transfer. Try the same list with `-p socks4`; expect more 'good' results.",
 
-  "input.no_input": "no proxy input. Pipe a list via stdin (e.g. `proxine http -s | proxyprof -p http`) or use `-f FILE`.",
+  "input.no_input": "no proxy input. Pipe a list via stdin (e.g. `proxine -p http -s | proxyprof -p http`) or use `-f FILE`.",
   "input.cannot_read": "cannot read '{file}': {err}",
   "input.no_valid_pairs": "no valid IP:PORT pairs in input.",
   "input.access_url_invalid": "--access-test URL '{url}' must start with http:// or https://",

@@ -96,7 +96,7 @@ country │ TR=42 US=28 DE=21 RU=18 BR=14  +74 more
 ```bash
 # proxine'den taze HTTP proxy → kendi CF judge'una karşı test → sadece elite +
 # CONNECT-yetkili + 3 rastgele CF gatekeeper'a geçen proxy'leri al.
-proxine http -s | proxyprof http \
+proxine -p http -s | proxyprof http \
   -j https://yours.tld/proxyjudge.php \
   --access-test \
   -o production-ready.lst
