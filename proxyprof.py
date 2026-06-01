@@ -1396,6 +1396,7 @@ class LiveTable:
         access_mode: str = "off", access_count: int = 0,
         quit_event=None, force_event=None, pause_event=None,
         protocol: str = "",
+        tunnel_test: bool = True, mitm_test: bool = True,
         file=sys.stderr,
     ) -> None:
         # quit_event/force_event: asyncio.Event veya None. 'q' tuşu birinciye
@@ -1461,15 +1462,29 @@ class LiveTable:
         # bir alt-header bloğu (separator + label row + separator) yeniden
         # basılır ve sayaç sıfırlanır.
         self._rows_since_header = 0
+        # Kapalı testlerin sütunlarını gizle. Örn. `-p http` default'ta tunnel/
+        # mitm/access üçünü de OFF eder → tabloda hep "—" basmak yerine sütunu
+        # tamamen kaldırırız: ekran sade kalır + kullanıcı "bu test yapılmadı"
+        # bilgisini görsel olarak alır (sütun yoksa test de yok).
+        _skip = set()
+        if not tunnel_test:
+            _skip.add("TUN")
+        if not mitm_test:
+            _skip.add("MITM")
+        if access_mode == ACCESS_MODE_OFF:
+            _skip.add("ACC")
         # Sütun adı → genişlik (etiket uzunluğunu da hesaba kat).
         self._cols: dict[str, int] = {}
         for code, (key, min_w) in self._FIXED.items():
+            if code in _skip:
+                continue
             label = t(key)
             self._cols[code] = max(min_w, len(label))
         self._cols["#"] = max(self._cols["#"], len(f"{total}/{total}"))
         # Sütun adı → çevrilmiş etiket (header satırında basılır).
         self._labels: dict[str, str] = {
             code: t(key) for code, (key, _) in self._FIXED.items()
+            if code not in _skip
         }
         self._started = time.monotonic()
         # Progress satırı için CPU kümül başlangıcı — sürekli ortalama göster.
@@ -1806,23 +1821,25 @@ class LiveTable:
                 acc_cell = _paint("✓", _C_GREEN)
             else:
                 acc_cell = _paint(r.access_reason or "×", _C_RED)
-            cells = [
-                # # sütunu = tablodaki satır sırası (1, 2, 3, ...). Her r.ok
-                # için 1 artar (DURUM ne olursa olsun); progress sayacındaki
-                # iyi/elendi ayrımıyla karışmasın.
-                _paint(str(self._table_row), _C_DIM),
-                status,
-                bkt,
-                _paint(r.proxy, _C_CYAN),
-                _paint(self.protocol or "—", _C_DIM),
-                lvl,
-                _paint(r.outbound_ip, _C_CYAN) if r.outbound_ip else _paint("—", _C_DIM),
-                i18n.country_name(r.country) if r.country else _paint("—", _C_DIM),
-                f"{r.elapsed:.1f}s",
-                _mark(r.tunnel_ok),
-                mitm_mark,
-                acc_cell,
-            ]
+            # # sütunu = tablodaki satır sırası (1, 2, 3, ...). Her r.ok
+            # için 1 artar (DURUM ne olursa olsun); progress sayacındaki
+            # iyi/elendi ayrımıyla karışmasın.
+            _cell_map = {
+                "#":      _paint(str(self._table_row), _C_DIM),
+                "STATUS": status,
+                "BKT":    bkt,
+                "PROXY":  _paint(r.proxy, _C_CYAN),
+                "PROTO":  _paint(self.protocol or "—", _C_DIM),
+                "LVL":    lvl,
+                "OUT":    _paint(r.outbound_ip, _C_CYAN) if r.outbound_ip else _paint("—", _C_DIM),
+                "CC":     i18n.country_name(r.country) if r.country else _paint("—", _C_DIM),
+                "TIME":   f"{r.elapsed:.1f}s",
+                "TUN":    _mark(r.tunnel_ok),
+                "MITM":   mitm_mark,
+                "ACC":    acc_cell,
+            }
+            # Sadece aktif sütunları (_cols sırasında) bas.
+            cells = [_cell_map[code] for code in self._cols.keys()]
             # HEADER_REPEAT OK satırı geçtiyse, bu satırdan önce başlık
             # bloğunu yeniden bas. Kullanıcı uzun taramalarda terminal
             # scroll'ladıktan sonra sütun adlarına tekrar bakabilir.
@@ -3297,6 +3314,12 @@ async def amain(args: argparse.Namespace) -> int:
             candidates = list(judges_for(args.protocol))
 
             async def _cf_check(url: str) -> tuple[str, bool]:
+                # Trusted self-host judge'lar (proxyjudge.php) BİLEREK CF
+                # arkasında — CF-Connecting-IP normalize edip ülke kodunu
+                # çıkartmak için. CF filtresi public azenv'lar bir gün CF'e
+                # geçerse onları elemek içindi; kendi judge'umuzu hayır.
+                if _judge_accepts_proxyprof_header(url):
+                    return url, False
                 try:
                     is_cf, _ = await asyncio.wait_for(
                         is_judge_behind_cf(url, session=None, timeout=3.0),
@@ -3475,6 +3498,7 @@ async def amain(args: argparse.Namespace) -> int:
         quit_event=quit_event, force_event=force_event,
         pause_event=pause_event,
         protocol=args.protocol,
+        tunnel_test=args.tunnel_test, mitm_test=args.mitm_test,
     )
 
     # Country filter set'leri scan başlamadan inşa edilir; stream-writer

@@ -19,3 +19,7 @@ STDOUT
 # kendi PHP host'larına kendi konfigleriyle deploy etsin.
 proxyjudge.php
 proxyjudge.log
+
+# --debug FILE çıktısı (geliştirici-lokal probe trace log'u).
+debug.log
+debug.logs

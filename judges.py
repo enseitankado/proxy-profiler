@@ -224,7 +224,7 @@ HTTP_JUDGES: tuple[str, ...] = (
     # tankado.com: bu repo'nun trusted self-host judge'ı. _TRUSTED_JUDGE_DOMAINS
     # ile eşleşir → X-Proxyprof-Proxy header'ı gönderilir, judge tarafında
     # ziyaret eden proxy'lerin protocol/IP/port bilgisi loglanır.
-    "https://tankado.com/proxyjudge.php",
+    "https://tankado.com/projects/proxy_detect/proxyjudge.php",
     "http://httpheader.net/azenv.php",
     "http://azenv.net",
     "http://www.meow.org.uk/cgi-bin/env.pl",
@@ -237,7 +237,7 @@ HTTP_JUDGES: tuple[str, ...] = (
 )
 
 HTTPS_JUDGES: tuple[str, ...] = (
-    "https://tankado.com/proxyjudge.php",
+    "https://tankado.com/projects/proxy_detect/proxyjudge.php",
     "https://httpheader.net/azenv.php",
     "https://wfuchs.de/azenv.php",
     "https://proxyjudge.biz",
