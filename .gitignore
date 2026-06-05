@@ -6,7 +6,14 @@ venv/
 build/
 dist/
 
+# Cron çıktıları: kök dizindeki tüm .lst'leri yoksay AMA 4 protokol listesini
+# whitelist'le — bunlar 2 saatte bir cron ile yenilenip repoya push edilir
+# (bkz. git-autopush.sh). Diğer geçici .lst'ler (working.lst vb.) repoya çıkmaz.
 /*.lst
+!/http.lst
+!/https.lst
+!/socks4.lst
+!/socks5.lst
 STDOUT
 
 # proxyprof reputation state (SQLite + WAL/SHM dosyaları)
@@ -23,3 +30,10 @@ proxyjudge.log
 # --debug FILE çıktısı (geliştirici-lokal probe trace log'u).
 debug.log
 debug.logs
+
+# Cron pipeline log'u (operatör-lokal; proxyprof tablosu/özet buraya yazılır).
+proxyprof.log
+
+# Operatör-lokal autopush script'i (hardcoded path icerir; proxine ile ayni
+# yaklasim — public repoya cikmaz, fork edenler kendi cron'unu kurar).
+git-autopush.sh
