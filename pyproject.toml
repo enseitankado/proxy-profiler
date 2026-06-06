@@ -25,6 +25,7 @@ dependencies = [
 
 [project.scripts]
 proxyprof = "proxyprof:main"
+proxy-prof = "proxyprof:main"
 
 [project.urls]
 Homepage = "https://github.com/enseitankado/proxy-profiler"
