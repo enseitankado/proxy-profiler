@@ -3359,6 +3359,15 @@ async def amain(args: argparse.Namespace) -> int:
             # zaten error_log basılır; burada scan'i blokeleme.
             pass
 
+    # Birleşik input + seed'i RASGELE sıraya sok. Sebep: aynı kaynak (proxine
+    # output, prev -o seed) her run'da aynı sırada gelirse aynı subnet/AS'in
+    # proxy'leri art arda taranır → tek bir upstream/abuse-detector için yoğun
+    # patlama gibi görünür. Shuffle ile yük zamanda ve hedef IP uzayında
+    # eşit dağılır. Reputation açıksa weighted_interleave bucket'a göre yine
+    # düzenler ama bucket İÇİNDE bu rasgele sıra korunur (deterministik
+    # değişimi yok).
+    random.shuffle(proxies)
+
     # --no-access-test her durumda --access-test'in üzerine yazar; AUTO,
     # cloudflare, google preset'i, ya da özel URL listesi — hepsi iptal edilir.
     if args.no_access_test:
